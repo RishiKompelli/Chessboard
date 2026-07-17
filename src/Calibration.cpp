@@ -260,3 +260,109 @@ bool squareToPosition(char file, char rank, long &x, long &y) {
 
   return true;
 }
+
+bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
+  if (!boardCalibrated) {
+    Serial.println("Board not calibrated yet.");
+    return false;
+  }
+
+  long fromX, fromY;
+  long toX, toY;
+
+  if (!squareToPosition(fromFile, fromRank, fromX, fromY)) {
+    Serial.println("Invalid from square.");
+    return false;
+  }
+
+  if (!squareToPosition(toFile, toRank, toX, toY)) {
+    Serial.println("Invalid to square.");
+    return false;
+  }
+
+  Serial.print("Safe moving piece from ");
+  Serial.print(fromFile);
+  Serial.print(fromRank);
+  Serial.print(" to ");
+  Serial.print(toFile);
+  Serial.println(toRank);
+
+  // Magnet off before moving
+  if (!Motion::moveTo(fromX, fromY)) {
+    Magnet::off();
+    return false;
+  }
+
+  delay(200);
+
+  Magnet::on();
+  delay(MAGNET_PICKUP_DELAY_MS);
+
+  long dx = toX - fromX;
+  long dy = toY - fromY;
+
+  long laneOffsetX = round(squareSpacingX / 2.0);
+  long laneOffsetY = round(squareSpacingY / 2.0);
+
+  long laneX;
+  long laneY;
+
+  // If moving more vertical, travel in a file lane.
+  if (abs(dy) >= abs(dx)) {
+    if (fromFile < 'h') {
+      laneX = fromX + laneOffsetX;
+    } else {
+      laneX = fromX - laneOffsetX;
+    }
+
+    // start center -> file lane -> same lane near destination -> destination center
+    if (!Motion::moveTo(laneX, fromY)) {
+      Magnet::off();
+      return false;
+    }
+
+    if (!Motion::moveTo(laneX, toY)) {
+      Magnet::off();
+      return false;
+    }
+
+    if (!Motion::moveTo(toX, toY)) {
+      Magnet::off();
+      return false;
+    }
+  }
+
+  // If moving more horizontal, travel in a rank lane.
+  else {
+    if (fromRank < '8') {
+      laneY = fromY + laneOffsetY;
+    } else {
+      laneY = fromY - laneOffsetY;
+    }
+
+    // Path:
+    // start center -> rank lane -> same lane near destination -> destination center
+    if (!Motion::moveTo(fromX, laneY)) {
+      Magnet::off();
+      return false;
+    }
+
+    if (!Motion::moveTo(toX, laneY)) {
+      Magnet::off();
+      return false;
+    }
+
+    if (!Motion::moveTo(toX, toY)) {
+      Magnet::off();
+      return false;
+    }
+  }
+
+  Magnet::off();
+  delay(MAGNET_DROP_DELAY_MS);
+
+  BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+
+  Serial.println("Safe piece move complete.");
+  return true;
+}

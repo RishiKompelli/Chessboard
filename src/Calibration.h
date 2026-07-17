@@ -22,6 +22,7 @@ namespace Calibration {
   void testAllSquares();
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank);
+  bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank);
 }
 
 #endif

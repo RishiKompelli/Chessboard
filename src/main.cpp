@@ -175,7 +175,7 @@ void processMoveInput(char cmd) {
     enteringMove = false;
     moveIndex = 0;
 
-    Calibration::movePiece(fromFile, fromRank, toFile, toRank);
+    Calibration::movePieceSafe(fromFile, fromRank, toFile, toRank);
   }
 }
 
