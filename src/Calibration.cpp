@@ -261,26 +261,68 @@ bool squareToPosition(char file, char rank, long &x, long &y) {
   return true;
 }
 
-bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
+bool Calibration::movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
   if (!boardCalibrated) {
     Serial.println("Board not calibrated yet.");
+    Serial.println("Use z at a1, then m at h8 first.");
     return false;
+  }
+
+  if (fromFile == toFile && fromRank == toRank) {
+      Serial.println(
+          "Starting and destination squares are the same."
+      );
+      return false;
   }
 
   long fromX, fromY;
   long toX, toY;
 
   if (!squareToPosition(fromFile, fromRank, fromX, fromY)) {
-    Serial.println("Invalid from square.");
+    Serial.println("Invalid start square.");
     return false;
   }
 
   if (!squareToPosition(toFile, toRank, toX, toY)) {
-    Serial.println("Invalid to square.");
+    Serial.println("Invalid destination square.");
     return false;
   }
 
-  Serial.print("Safe moving piece from ");
+  //checking the matrix before moving
+  char movingPiece = BoardState::getPiece(fromFile, fromRank);
+
+  if (movingPiece == '?') {
+    Serial.println("Invalid starting square.");
+    return false;
+    }
+
+  if (movingPiece == '.') {
+    Serial.print("No piece stored at ");
+    Serial.print(fromFile);
+    Serial.println(fromRank);
+    return false;
+  }
+
+  char destinationPiece = BoardState::getPiece(toFile, toRank);
+
+  if (destinationPiece == '?') {
+    Serial.println("Invalid destination square.");
+    return false;
+  }
+
+  //havent implemented apturing pieces so just avoiding for now
+  if (destinationPiece != '.') {
+    Serial.print("Destination ");
+    Serial.print(toFile);
+    Serial.print(toRank);
+    Serial.println(" is occupied.");
+    Serial.println("Captures are not physically implemented yet.");
+    return false;
+    }
+
+  Serial.print("Safe moving");
+  Serial.print(movingPiece);
+  Serial.print(" from ");
   Serial.print(fromFile);
   Serial.print(fromRank);
   Serial.print(" to ");
@@ -295,6 +337,7 @@ bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
 
   delay(200);
 
+  // pick up the piece
   Magnet::on();
   delay(MAGNET_PICKUP_DELAY_MS);
 
@@ -358,10 +401,20 @@ bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
     }
   }
 
+  // Drop the piece
   Magnet::off();
   delay(MAGNET_DROP_DELAY_MS);
 
   BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+
+  Serial.println("Safe piece move complete.");
+  return true;
+
+  bool boardUpdated = BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+  if (!boardUpdated) {
+    Serial.println("ERROR: Physical move completed, but the board matrix was not updated.");
+    return false;
+  }
 
   Serial.println("Safe piece move complete.");
   return true;
