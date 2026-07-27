@@ -21,6 +21,7 @@ void setup() {
   BoardState::reset();
 
   Serial.println("CoreXY Chessboard Controller Ready");
+  Calibration::loadCalibration();
   BoardState::print();
 
   printHelp();
@@ -84,6 +85,12 @@ void processSingleCommand(char cmd) {
   }
   else if (cmd == 'm') {
     Calibration::setBoardMax();
+  }
+  else if (cmd == 'c') {
+  Calibration::startFourCornerCalibration();
+  }
+  else if (cmd == 'k') {
+    Calibration::recordCalibrationPoint();
   }
   else if (cmd == 'g') {
     Calibration::printGrid();
@@ -206,6 +213,8 @@ void printHelp() {
   Serial.println("z = zero position at a1 / bottom-left");
   Serial.println("p = print position");
   Serial.println("m = set current position as h8 / top-right");
+  Serial.println("c = start 4-corner calibration");
+  Serial.println("k = save current calibration corner");
   Serial.println("g = print grid");
   Serial.println("t = test all 64 squares");
   Serial.println("o = electromagnet on");

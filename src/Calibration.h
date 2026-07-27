@@ -7,7 +7,14 @@ namespace Calibration {
   void zeroPosition();
   void printPosition();
 
+  // Old quick calibration still works
   void setBoardMax();
+
+  // New 4-corner calibration
+  void startFourCornerCalibration();
+  void recordCalibrationPoint();
+  bool loadCalibration();
+
   void printGrid();
 
   bool isCalibrated();

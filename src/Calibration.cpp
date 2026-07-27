@@ -2,6 +2,18 @@
 #include "Motion.h"
 #include "Magnet.h"
 #include "BoardState.h"
+#include <EEPROM.h>
+
+struct PointF {
+  float x;
+  float y;
+};
+
+// Four calibrated board corners
+PointF cornerA1;
+PointF cornerH1;
+PointF cornerA8;
+PointF cornerH8;
 
 long boardMaxX = 0;
 long boardMaxY = 0;
@@ -10,20 +22,51 @@ float squareSpacingX = 0;
 float squareSpacingY = 0;
 
 bool boardCalibrated = false;
+bool calibrationMode = false;
+int calibrationStep = 0;
 
 const int SQUARE_PAUSE_MS = 500;
 const int MAGNET_PICKUP_DELAY_MS = 300;
 const int MAGNET_DROP_DELAY_MS = 300;
 
-bool squareToPosition(char file, char rank, long &x, long &y);
+const uint32_t CALIBRATION_MAGIC = 0x43414C34UL; // "CAL4"
+const uint16_t CALIBRATION_VERSION = 1;
+const int CALIBRATION_EEPROM_ADDRESS = 0;
+
+struct StoredCalibration {
+  uint32_t magic;
+  uint16_t version;
+  int32_t coordinates[8];
+  uint16_t checksum;
+};
+
+// Internal functions
+static void promptCalibrationStep();
+static void finishFourCornerCalibration(bool saveToEeprom = true);
+static void saveCalibration();
+static void clearSavedCalibration();
+static uint16_t calibrationChecksum(const StoredCalibration &stored);
+
+static PointF lerp(PointF a, PointF b, float t);
+static bool gridToPosition(float fileCoord, float rankCoord, long &x, long &y);
+static bool squareToPosition(char file, char rank, long &x, long &y);
+
+static bool isValidSquare(char file, char rank);
+static int fileToIndex(char file);
+static int rankToIndex(char rank);
 
 namespace Calibration {
 
   void zeroPosition() {
     Motion::zeroPosition();
 
+    boardCalibrated = false;
+    calibrationMode = false;
+    calibrationStep = 0;
+    clearSavedCalibration();
+
     Serial.println("Position zeroed.");
-    Serial.println("This should be a1 / bottom-left.");
+    Serial.println("Existing board calibration cleared.");
     printPosition();
   }
 
@@ -34,41 +77,144 @@ namespace Calibration {
     Serial.println(Motion::getY());
   }
 
+  void startFourCornerCalibration() {
+    boardCalibrated = false;
+    calibrationMode = true;
+    calibrationStep = 0;
+
+    Serial.println();
+    Serial.println("Starting 4-corner calibration.");
+    Serial.println("Use WASD to move to each square center.");
+    Serial.println("Press x to stop before saving each point.");
+    Serial.println("Then press k to save that corner.");
+    Serial.println();
+
+    promptCalibrationStep();
+  }
+
+  void recordCalibrationPoint() {
+    if (!calibrationMode) {
+      Serial.println("Not in calibration mode.");
+      Serial.println("Press c to start 4-corner calibration.");
+      return;
+    }
+
+    PointF currentPoint;
+    currentPoint.x = Motion::getX();
+    currentPoint.y = Motion::getY();
+
+    if (calibrationStep == 0) {
+      cornerA1 = currentPoint;
+      Serial.print("Saved a1: ");
+    }
+    else if (calibrationStep == 1) {
+      cornerH1 = currentPoint;
+      Serial.print("Saved h1: ");
+    }
+    else if (calibrationStep == 2) {
+      cornerA8 = currentPoint;
+      Serial.print("Saved a8: ");
+    }
+    else if (calibrationStep == 3) {
+      cornerH8 = currentPoint;
+      Serial.print("Saved h8: ");
+    }
+
+    Serial.print("X = ");
+    Serial.print(currentPoint.x);
+    Serial.print(", Y = ");
+    Serial.println(currentPoint.y);
+
+    calibrationStep++;
+
+    if (calibrationStep >= 4) {
+      finishFourCornerCalibration();
+    }
+    else {
+      promptCalibrationStep();
+    }
+  }
+
+  bool loadCalibration() {
+    StoredCalibration stored;
+    EEPROM.get(CALIBRATION_EEPROM_ADDRESS, stored);
+
+    if (stored.magic != CALIBRATION_MAGIC ||
+        stored.version != CALIBRATION_VERSION ||
+        stored.checksum != calibrationChecksum(stored)) {
+      boardCalibrated = false;
+      Serial.println("No saved calibration found.");
+      return false;
+    }
+
+    PointF *corners[] = {&cornerA1, &cornerH1, &cornerA8, &cornerH8};
+
+    for (int corner = 0; corner < 4; corner++) {
+      corners[corner]->x = stored.coordinates[corner * 2];
+      corners[corner]->y = stored.coordinates[corner * 2 + 1];
+    }
+
+    finishFourCornerCalibration(false);
+    Serial.println("Calibration loaded from EEPROM.");
+    return true;
+  }
+
+  // Old quick calibration: assumes a1 is 0,0 and current position is h8
   void setBoardMax() {
-    boardMaxX = Motion::getX();
-    boardMaxY = Motion::getY();
+    cornerA1.x = 0;
+    cornerA1.y = 0;
 
-    squareSpacingX = boardMaxX / 7.0;
-    squareSpacingY = boardMaxY / 7.0;
+    cornerH1.x = Motion::getX();
+    cornerH1.y = 0;
 
-    boardCalibrated = true;
+    cornerA8.x = 0;
+    cornerA8.y = Motion::getY();
 
-    Serial.println("Board max saved.");
-    Serial.println("This should be h8 / top-right.");
+    cornerH8.x = Motion::getX();
+    cornerH8.y = Motion::getY();
 
-    Serial.print("boardMaxX = ");
-    Serial.println(boardMaxX);
-
-    Serial.print("boardMaxY = ");
-    Serial.println(boardMaxY);
-
-    printGrid();
+    finishFourCornerCalibration();
   }
 
   void printGrid() {
     if (!boardCalibrated) {
       Serial.println("Board not calibrated yet.");
-      Serial.println("Move to h8 / top-right and press m first.");
+      Serial.println("Use c for 4-corner calibration.");
       return;
     }
 
     Serial.println();
-    Serial.println("Grid info:");
+    Serial.println("4-corner calibration data:");
 
-    Serial.print("Square spacing X = ");
+    Serial.print("a1 = (");
+    Serial.print(cornerA1.x);
+    Serial.print(", ");
+    Serial.print(cornerA1.y);
+    Serial.println(")");
+
+    Serial.print("h1 = (");
+    Serial.print(cornerH1.x);
+    Serial.print(", ");
+    Serial.print(cornerH1.y);
+    Serial.println(")");
+
+    Serial.print("a8 = (");
+    Serial.print(cornerA8.x);
+    Serial.print(", ");
+    Serial.print(cornerA8.y);
+    Serial.println(")");
+
+    Serial.print("h8 = (");
+    Serial.print(cornerH8.x);
+    Serial.print(", ");
+    Serial.print(cornerH8.y);
+    Serial.println(")");
+
+    Serial.println();
+    Serial.print("Average square spacing X = ");
     Serial.println(squareSpacingX);
 
-    Serial.print("Square spacing Y = ");
+    Serial.print("Average square spacing Y = ");
     Serial.println(squareSpacingY);
 
     Serial.println();
@@ -79,8 +225,10 @@ namespace Calibration {
         char fileChar = 'a' + file;
         char rankChar = '1' + rank;
 
-        long squareX = round(file * squareSpacingX);
-        long squareY = round(rank * squareSpacingY);
+        long squareX;
+        long squareY;
+
+        gridToPosition(file, rank, squareX, squareY);
 
         Serial.print(fileChar);
         Serial.print(rankChar);
@@ -120,7 +268,7 @@ namespace Calibration {
   bool moveToSquare(char file, char rank) {
     if (!boardCalibrated) {
       Serial.println("Board not calibrated yet.");
-      Serial.println("Use z at a1, then m at h8 first.");
+      Serial.println("Use c for 4-corner calibration first.");
       return false;
     }
 
@@ -150,7 +298,7 @@ namespace Calibration {
   void testAllSquares() {
     if (!boardCalibrated) {
       Serial.println("Board not calibrated yet.");
-      Serial.println("Use z at a1, then m at h8 first.");
+      Serial.println("Use c for 4-corner calibration first.");
       return;
     }
 
@@ -158,12 +306,6 @@ namespace Calibration {
     Serial.println("Starting 64-square test.");
     Serial.println("Send x during movement to abort.");
     Serial.println();
-
-    // Serpentine path:
-    // a1 b1 c1 ... h1
-    // h2 g2 f2 ... a2
-    // a3 b3 ...
-    // This avoids long jumps at the end of every row.
 
     for (int rankIndex = 0; rankIndex < 8; rankIndex++) {
       if (rankIndex % 2 == 0) {
@@ -192,230 +334,301 @@ namespace Calibration {
 
     Serial.println("64-square test complete.");
   }
+
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
-  if (!boardCalibrated) {
-    Serial.println("Board not calibrated yet.");
-    Serial.println("Use z at a1, then m at h8 first.");
-    return false;
-  }
-
-  Serial.print("Moving piece from ");
-  Serial.print(fromFile);
-  Serial.print(fromRank);
-  Serial.print(" to ");
-  Serial.print(toFile);
-  Serial.println(toRank);
-
-  // 1. Go to starting square
-  bool success = moveToSquare(fromFile, fromRank);
-
-  if (!success) {
-    Serial.println("Could not reach starting square.");
-    Magnet::off();
-    return false;
-  }
-
-  delay(200);
-
-  // 2. Pick up piece with electromagnet
-  Magnet::on();
-  delay(MAGNET_PICKUP_DELAY_MS);
-
-  // 3. Drag piece to destination square
-  success = moveToSquare(toFile, toRank);
-
-  if (!success) {
-    Serial.println("Move interrupted while carrying piece.");
-    Magnet::off();
-    return false;
-  }
-
-  delay(200);
-
-  // 4. Drop piece
-  Magnet::off();
-  delay(MAGNET_DROP_DELAY_MS);
-
-  BoardState::movePiece(fromFile, fromRank, toFile, toRank);
-
-  Serial.println("Piece move complete.");
-  return true;
-}
-}
-
-bool squareToPosition(char file, char rank, long &x, long &y) {
-  if (file < 'a' || file > 'h') {
-    return false;
-  }
-
-  if (rank < '1' || rank > '8') {
-    return false;
-  }
-
-  int fileIndex = file - 'a';
-  int rankIndex = rank - '1';
-
-  x = round(fileIndex * squareSpacingX);
-  y = round(rankIndex * squareSpacingY);
-
-  return true;
-}
-
-bool Calibration::movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
-  if (!boardCalibrated) {
-    Serial.println("Board not calibrated yet.");
-    Serial.println("Use z at a1, then m at h8 first.");
-    return false;
-  }
-
-  if (fromFile == toFile && fromRank == toRank) {
-      Serial.println(
-          "Starting and destination squares are the same."
-      );
+    if (!boardCalibrated) {
+      Serial.println("Board not calibrated yet.");
       return false;
-  }
-
-  long fromX, fromY;
-  long toX, toY;
-
-  if (!squareToPosition(fromFile, fromRank, fromX, fromY)) {
-    Serial.println("Invalid start square.");
-    return false;
-  }
-
-  if (!squareToPosition(toFile, toRank, toX, toY)) {
-    Serial.println("Invalid destination square.");
-    return false;
-  }
-
-  //checking the matrix before moving
-  char movingPiece = BoardState::getPiece(fromFile, fromRank);
-
-  if (movingPiece == '?') {
-    Serial.println("Invalid starting square.");
-    return false;
     }
 
-  if (movingPiece == '.') {
-    Serial.print("No piece stored at ");
+    Serial.print("Moving piece from ");
     Serial.print(fromFile);
-    Serial.println(fromRank);
-    return false;
-  }
-
-  char destinationPiece = BoardState::getPiece(toFile, toRank);
-
-  if (destinationPiece == '?') {
-    Serial.println("Invalid destination square.");
-    return false;
-  }
-
-  //havent implemented apturing pieces so just avoiding for now
-  if (destinationPiece != '.') {
-    Serial.print("Destination ");
+    Serial.print(fromRank);
+    Serial.print(" to ");
     Serial.print(toFile);
-    Serial.print(toRank);
-    Serial.println(" is occupied.");
-    Serial.println("Captures are not physically implemented yet.");
-    return false;
+    Serial.println(toRank);
+
+    bool success = moveToSquare(fromFile, fromRank);
+
+    if (!success) {
+      Magnet::off();
+      return false;
     }
 
-  Serial.print("Safe moving");
-  Serial.print(movingPiece);
-  Serial.print(" from ");
-  Serial.print(fromFile);
-  Serial.print(fromRank);
-  Serial.print(" to ");
-  Serial.print(toFile);
-  Serial.println(toRank);
+    delay(200);
 
-  // Magnet off before moving
-  if (!Motion::moveTo(fromX, fromY)) {
+    Magnet::on();
+    delay(MAGNET_PICKUP_DELAY_MS);
+
+    success = moveToSquare(toFile, toRank);
+
+    if (!success) {
+      Magnet::off();
+      return false;
+    }
+
+    delay(200);
+
     Magnet::off();
+    delay(MAGNET_DROP_DELAY_MS);
+
+    BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+
+    Serial.println("Piece move complete.");
+    return true;
+  }
+
+  bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
+    if (!boardCalibrated) {
+      Serial.println("Board not calibrated yet.");
+      return false;
+    }
+
+    if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
+      Serial.println("Invalid move square.");
+      return false;
+    }
+
+    int fromFileIndex = fileToIndex(fromFile);
+    int fromRankIndex = rankToIndex(fromRank);
+
+    int toFileIndex = fileToIndex(toFile);
+    int toRankIndex = rankToIndex(toRank);
+
+    long fromX, fromY;
+    long toX, toY;
+
+    squareToPosition(fromFile, fromRank, fromX, fromY);
+    squareToPosition(toFile, toRank, toX, toY);
+
+    Serial.print("Safe moving piece from ");
+    Serial.print(fromFile);
+    Serial.print(fromRank);
+    Serial.print(" to ");
+    Serial.print(toFile);
+    Serial.println(toRank);
+
+    if (!Motion::moveTo(fromX, fromY)) {
+      Magnet::off();
+      return false;
+    }
+
+    delay(200);
+
+    Magnet::on();
+    delay(MAGNET_PICKUP_DELAY_MS);
+
+    int dFile = toFileIndex - fromFileIndex;
+    int dRank = toRankIndex - fromRankIndex;
+
+    // If mostly vertical, travel through a file lane between columns.
+    if (abs(dRank) >= abs(dFile)) {
+      float laneFile;
+
+      if (fromFileIndex < 7) {
+        laneFile = fromFileIndex + 0.5;
+      }
+      else {
+        laneFile = fromFileIndex - 0.5;
+      }
+
+      long laneStartX, laneStartY;
+      long laneEndX, laneEndY;
+
+      gridToPosition(laneFile, fromRankIndex, laneStartX, laneStartY);
+      gridToPosition(laneFile, toRankIndex, laneEndX, laneEndY);
+
+      Serial.println("Using vertical lane path.");
+
+      if (!Motion::moveTo(laneStartX, laneStartY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(laneEndX, laneEndY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(toX, toY)) {
+        Magnet::off();
+        return false;
+      }
+    }
+
+    // If mostly horizontal, travel through a rank lane between rows.
+    else {
+      float laneRank;
+
+      if (fromRankIndex < 7) {
+        laneRank = fromRankIndex + 0.5;
+      }
+      else {
+        laneRank = fromRankIndex - 0.5;
+      }
+
+      long laneStartX, laneStartY;
+      long laneEndX, laneEndY;
+
+      gridToPosition(fromFileIndex, laneRank, laneStartX, laneStartY);
+      gridToPosition(toFileIndex, laneRank, laneEndX, laneEndY);
+
+      Serial.println("Using horizontal lane path.");
+
+      if (!Motion::moveTo(laneStartX, laneStartY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(laneEndX, laneEndY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(toX, toY)) {
+        Magnet::off();
+        return false;
+      }
+    }
+
+    Magnet::off();
+    delay(MAGNET_DROP_DELAY_MS);
+
+    BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+
+    Serial.println("Safe piece move complete.");
+    return true;
+  }
+}
+
+// ---------------- INTERNAL HELPERS ----------------
+
+static void promptCalibrationStep() {
+  Serial.println();
+
+  if (calibrationStep == 0) {
+    Serial.println("Move to center of a1, then press k.");
+  }
+  else if (calibrationStep == 1) {
+    Serial.println("Move to center of h1, then press k.");
+  }
+  else if (calibrationStep == 2) {
+    Serial.println("Move to center of a8, then press k.");
+  }
+  else if (calibrationStep == 3) {
+    Serial.println("Move to center of h8, then press k.");
+  }
+
+  Serial.println();
+}
+
+static void finishFourCornerCalibration(bool saveToEeprom) {
+  calibrationMode = false;
+  boardCalibrated = true;
+
+  boardMaxX = round(cornerH8.x);
+  boardMaxY = round(cornerH8.y);
+
+  squareSpacingX = ((cornerH1.x - cornerA1.x) + (cornerH8.x - cornerA8.x)) / 14.0;
+  squareSpacingY = ((cornerA8.y - cornerA1.y) + (cornerH8.y - cornerH1.y)) / 14.0;
+
+  Serial.println();
+  Serial.println("4-corner calibration complete.");
+  Serial.println("The board grid has been generated.");
+  Serial.println();
+
+  if (saveToEeprom) {
+    saveCalibration();
+    Serial.println("Calibration saved to EEPROM.");
+  }
+
+  Calibration::printGrid();
+}
+
+static void saveCalibration() {
+  StoredCalibration stored = {};
+  stored.magic = CALIBRATION_MAGIC;
+  stored.version = CALIBRATION_VERSION;
+
+  PointF corners[] = {cornerA1, cornerH1, cornerA8, cornerH8};
+
+  for (int corner = 0; corner < 4; corner++) {
+    stored.coordinates[corner * 2] = round(corners[corner].x);
+    stored.coordinates[corner * 2 + 1] = round(corners[corner].y);
+  }
+
+  stored.checksum = calibrationChecksum(stored);
+  EEPROM.put(CALIBRATION_EEPROM_ADDRESS, stored);
+}
+
+static void clearSavedCalibration() {
+  uint32_t emptyMagic = 0;
+  EEPROM.put(CALIBRATION_EEPROM_ADDRESS, emptyMagic);
+}
+
+static uint16_t calibrationChecksum(const StoredCalibration &stored) {
+  const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&stored);
+  const size_t checksumOffset = offsetof(StoredCalibration, checksum);
+  uint16_t checksum = 0xFFFF;
+
+  for (size_t i = 0; i < checksumOffset; i++) {
+    checksum ^= bytes[i];
+
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      checksum = (checksum & 1) ? (checksum >> 1) ^ 0xA001 : checksum >> 1;
+    }
+  }
+
+  return checksum;
+}
+
+static PointF lerp(PointF a, PointF b, float t) {
+  PointF result;
+
+  result.x = a.x + (b.x - a.x) * t;
+  result.y = a.y + (b.y - a.y) * t;
+
+  return result;
+}
+
+static bool gridToPosition(float fileCoord, float rankCoord, long &x, long &y) {
+  if (!boardCalibrated) {
     return false;
   }
 
-  delay(200);
+  float u = fileCoord / 7.0;
+  float v = rankCoord / 7.0;
 
-  // pick up the piece
-  Magnet::on();
-  delay(MAGNET_PICKUP_DELAY_MS);
+  PointF bottom = lerp(cornerA1, cornerH1, u);
+  PointF top = lerp(cornerA8, cornerH8, u);
 
-  long dx = toX - fromX;
-  long dy = toY - fromY;
+  PointF point = lerp(bottom, top, v);
 
-  long laneOffsetX = round(squareSpacingX / 2.0);
-  long laneOffsetY = round(squareSpacingY / 2.0);
+  x = round(point.x);
+  y = round(point.y);
 
-  long laneX;
-  long laneY;
-
-  // If moving more vertical, travel in a file lane.
-  if (abs(dy) >= abs(dx)) {
-    if (fromFile < 'h') {
-      laneX = fromX + laneOffsetX;
-    } else {
-      laneX = fromX - laneOffsetX;
-    }
-
-    // start center -> file lane -> same lane near destination -> destination center
-    if (!Motion::moveTo(laneX, fromY)) {
-      Magnet::off();
-      return false;
-    }
-
-    if (!Motion::moveTo(laneX, toY)) {
-      Magnet::off();
-      return false;
-    }
-
-    if (!Motion::moveTo(toX, toY)) {
-      Magnet::off();
-      return false;
-    }
-  }
-
-  // If moving more horizontal, travel in a rank lane.
-  else {
-    if (fromRank < '8') {
-      laneY = fromY + laneOffsetY;
-    } else {
-      laneY = fromY - laneOffsetY;
-    }
-
-    // Path:
-    // start center -> rank lane -> same lane near destination -> destination center
-    if (!Motion::moveTo(fromX, laneY)) {
-      Magnet::off();
-      return false;
-    }
-
-    if (!Motion::moveTo(toX, laneY)) {
-      Magnet::off();
-      return false;
-    }
-
-    if (!Motion::moveTo(toX, toY)) {
-      Magnet::off();
-      return false;
-    }
-  }
-
-  // Drop the piece
-  Magnet::off();
-  delay(MAGNET_DROP_DELAY_MS);
-
-  BoardState::movePiece(fromFile, fromRank, toFile, toRank);
-
-  Serial.println("Safe piece move complete.");
   return true;
+}
 
-  bool boardUpdated = BoardState::movePiece(fromFile, fromRank, toFile, toRank);
-  if (!boardUpdated) {
-    Serial.println("ERROR: Physical move completed, but the board matrix was not updated.");
+static bool squareToPosition(char file, char rank, long &x, long &y) {
+  if (!isValidSquare(file, rank)) {
     return false;
   }
 
-  Serial.println("Safe piece move complete.");
-  return true;
+  int fileIndex = fileToIndex(file);
+  int rankIndex = rankToIndex(rank);
+
+  return gridToPosition(fileIndex, rankIndex, x, y);
+}
+
+static bool isValidSquare(char file, char rank) {
+  return file >= 'a' && file <= 'h' && rank >= '1' && rank <= '8';
+}
+
+static int fileToIndex(char file) {
+  return file - 'a';
+}
+
+static int rankToIndex(char rank) {
+  return rank - '1';
 }
