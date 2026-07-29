@@ -15,15 +15,24 @@ int moveIndex = 0;
 
 void setup() {
   Serial.begin(9600);
+  delay(2000);
+
+  Serial.println();
+  Serial.println(F("=== CHESSBOARD CODE STARTED VERSION TEST 1 ==="));
 
   Motion::begin();
+  Serial.println(F("Motion started"));
+
   Magnet::begin();
+  Serial.println(F("Magnet started"));
+
   BoardState::reset();
+  Serial.println(F("Board state reset"));
 
-  Serial.println("CoreXY Chessboard Controller Ready");
   Calibration::loadCalibration();
-  BoardState::print();
+  Serial.println(F("Calibration load attempted"));
 
+  Serial.println(F("CoreXY Chessboard Controller Ready"));
   printHelp();
 }
 
@@ -50,26 +59,26 @@ void loop() {
 void processSingleCommand(char cmd) {
   if (cmd == 'w') {
     Motion::setJog(0, 1);
-    Serial.println("Moving up");
+    Serial.println(F("Moving up"));
   }
   else if (cmd == 's') {
     Motion::setJog(0, -1);
-    Serial.println("Moving down");
+    Serial.println(F("Moving down"));
   }
   else if (cmd == 'a') {
     Motion::setJog(-1, 0);
-    Serial.println("Moving left");
+    Serial.println(F("Moving left"));
   }
   else if (cmd == 'd') {
     Motion::setJog(1, 0);
-    Serial.println("Moving right");
+    Serial.println(F("Moving right"));
   }
   else if (cmd == 'x') {
     Motion::stop();
     Magnet::off();
     enteringMove = false;
     moveIndex = 0;
-    Serial.println("Stopped / aborted");
+    Serial.println(F("Stopped / aborted"));
   }
   else if (cmd == '+') {
     Motion::speedUp();
@@ -125,9 +134,9 @@ void processSingleCommand(char cmd) {
 
     Motion::stop();
 
-    Serial.println("Move mode started.");
-    Serial.println("Enter move as 4 chars, like d2d3.");
-    Serial.println("Send x to cancel.");
+    Serial.println(F("Move mode started."));
+    Serial.println(F("Enter move as 4 chars, like d2d3."));
+    Serial.println(F("Send x to cancel."));
   }
   else if (cmd == 'h') {
     printHelp();
@@ -140,7 +149,7 @@ void processSingleCommand(char cmd) {
     BoardState::print();
   }
   else {
-    Serial.print("Unknown command: ");
+    Serial.print(F("Unknown command: "));
     Serial.println(cmd);
   }
 }
@@ -150,14 +159,14 @@ void processMoveInput(char cmd) {
     enteringMove = false;
     moveIndex = 0;
     Magnet::off();
-    Serial.println("Move input cancelled.");
+    Serial.println(F("Move input cancelled."));
     return;
   }
 
   if (!isValidMoveChar(cmd, moveIndex)) {
-    Serial.print("Invalid move character: ");
+    Serial.print(F("Invalid move character: "));
     Serial.println(cmd);
-    Serial.println("Restarting move input. Enter something like d2d3.");
+    Serial.println(F("Restarting move input. Enter something like d2d3."));
     moveIndex = 0;
     return;
   }
@@ -165,7 +174,7 @@ void processMoveInput(char cmd) {
   moveBuffer[moveIndex] = cmd;
   moveIndex++;
 
-  Serial.print("Move input: ");
+  Serial.print(F("Move input: "));
   for (int i = 0; i < moveIndex; i++) {
     Serial.print(moveBuffer[i]);
   }
@@ -205,27 +214,27 @@ bool isValidMoveChar(char cmd, int index) {
 
 void printHelp() {
   Serial.println();
-  Serial.println("Commands:");
-  Serial.println("w/a/s/d = manual move");
-  Serial.println("x = stop / abort");
-  Serial.println("+ = faster");
-  Serial.println("- = slower");
-  Serial.println("z = zero position at a1 / bottom-left");
-  Serial.println("p = print position");
-  Serial.println("m = set current position as h8 / top-right");
-  Serial.println("c = start 4-corner calibration");
-  Serial.println("k = save current calibration corner");
-  Serial.println("g = print grid");
-  Serial.println("t = test all 64 squares");
-  Serial.println("o = electromagnet on");
-  Serial.println("f = electromagnet off");
-  Serial.println("v = toggle electromagnet");
-  Serial.println("r = enter chess move mode");
-  Serial.println("After r, type move like d2d3");
-  Serial.println("1/2 = test Motor A");
-  Serial.println("3/4 = test Motor B");
-  Serial.println("b = print board state");
-  Serial.println("i = reset board state");
-  Serial.println("h = help");
+  Serial.println(F("Commands:"));
+  Serial.println(F("w/a/s/d = manual move"));
+  Serial.println(F("x = stop / abort"));
+  Serial.println(F("+ = faster"));
+  Serial.println(F("- = slower"));
+  Serial.println(F("z = zero position at a1 / bottom-left"));
+  Serial.println(F("p = print position"));
+  Serial.println(F("m = set current position as h8 / top-right"));
+  Serial.println(F("c = start 4-corner calibration"));
+  Serial.println(F("k = save current calibration corner"));
+  Serial.println(F("g = print grid"));
+  Serial.println(F("t = test all 64 squares"));
+  Serial.println(F("o = electromagnet on"));
+  Serial.println(F("f = electromagnet off"));
+  Serial.println(F("v = toggle electromagnet"));
+  Serial.println(F("r = enter chess move mode"));
+  Serial.println(F("After r, type move like d2d3"));
+  Serial.println(F("1/2 = test Motor A"));
+  Serial.println(F("3/4 = test Motor B"));
+  Serial.println(F("b = print board state"));
+  Serial.println(F("i = reset board state"));
+  Serial.println(F("h = help"));
   Serial.println();
 }

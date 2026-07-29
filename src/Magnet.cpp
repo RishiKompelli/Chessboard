@@ -24,7 +24,7 @@ namespace Magnet {
       digitalWrite(MAGNET_PIN, LOW);
     }
 
-    Serial.println("Electromagnet ON");
+    Serial.println(F("Electromagnet ON"));
   }
 
   void off() {
@@ -36,7 +36,7 @@ namespace Magnet {
       digitalWrite(MAGNET_PIN, HIGH);
     }
 
-    Serial.println("Electromagnet OFF");
+    Serial.println(F("Electromagnet OFF"));
   }
 
   void toggle() {

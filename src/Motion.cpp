@@ -15,8 +15,8 @@ const int ENABLE_PIN = 8;
 const bool MOTOR_A_INVERT = false;
 const bool MOTOR_B_INVERT = false;
 
-const bool X_AXIS_INVERT = false;
-const bool Y_AXIS_INVERT = true;
+const bool X_AXIS_INVERT = true;
+const bool Y_AXIS_INVERT = false;
 
 // ---------- MOVEMENT STATE ----------
 int stepDelay = 700; // lower = faster
@@ -77,14 +77,14 @@ namespace Motion {
       stepDelay = 150;
     }
 
-    Serial.print("Speed up. Step delay = ");
+    Serial.print(F("Speed up. Step delay = "));
     Serial.println(stepDelay);
   }
 
   void slowDown() {
     stepDelay += 100;
 
-    Serial.print("Slow down. Step delay = ");
+    Serial.print(F("Slow down. Step delay = "));
     Serial.println(stepDelay);
   }
 
@@ -114,19 +114,19 @@ namespace Motion {
     if (motor == 'A') {
       stepPin = A_STEP_PIN;
       dirPin = A_DIR_PIN;
-      Serial.println("Testing Motor A");
+      Serial.println(F("Testing Motor A"));
     }
     else if (motor == 'B') {
       stepPin = B_STEP_PIN;
       dirPin = B_DIR_PIN;
-      Serial.println("Testing Motor B");
+      Serial.println(F("Testing Motor B"));
     }
     else {
-      Serial.println("Invalid motor.");
+      Serial.println(F("Invalid motor."));
       return;
     }
 
-    Serial.print("Direction = ");
+    Serial.print(F("Direction = "));
     Serial.println(direction);
 
     digitalWrite(dirPin, direction > 0 ? HIGH : LOW);
@@ -139,21 +139,21 @@ namespace Motion {
       delayMicroseconds(stepDelay);
     }
 
-    Serial.println("Raw motor test done.");
+    Serial.println(F("Raw motor test done."));
   }
 
   bool moveTo(long targetX, long targetY) {
     stop();
 
-    Serial.print("Moving to X=");
+    Serial.print(F("Moving to X="));
     Serial.print(targetX);
-    Serial.print(", Y=");
+    Serial.print(F(", Y="));
     Serial.println(targetY);
 
     // Move X first.
     while (currentX != targetX) {
       if (checkAbort()) {
-        Serial.println("Move aborted.");
+        Serial.println(F("Move aborted."));
         stop();
         return false;
       }
@@ -165,7 +165,7 @@ namespace Motion {
     // Then move Y.
     while (currentY != targetY) {
       if (checkAbort()) {
-        Serial.println("Move aborted.");
+        Serial.println(F("Move aborted."));
         stop();
         return false;
       }
@@ -174,7 +174,7 @@ namespace Motion {
       coreXYStep(0, yDir);
     }
 
-    Serial.println("Move complete.");
+    Serial.println(F("Move complete."));
     return true;
   }
 }

@@ -65,15 +65,15 @@ namespace Calibration {
     calibrationStep = 0;
     clearSavedCalibration();
 
-    Serial.println("Position zeroed.");
-    Serial.println("Existing board calibration cleared.");
+    Serial.println(F("Position zeroed."));
+    Serial.println(F("Existing board calibration cleared."));
     printPosition();
   }
 
   void printPosition() {
-    Serial.print("Current position: X = ");
+    Serial.print(F("Current position: X = "));
     Serial.print(Motion::getX());
-    Serial.print(", Y = ");
+    Serial.print(F(", Y = "));
     Serial.println(Motion::getY());
   }
 
@@ -83,10 +83,10 @@ namespace Calibration {
     calibrationStep = 0;
 
     Serial.println();
-    Serial.println("Starting 4-corner calibration.");
-    Serial.println("Use WASD to move to each square center.");
-    Serial.println("Press x to stop before saving each point.");
-    Serial.println("Then press k to save that corner.");
+    Serial.println(F("Starting 4-corner calibration."));
+    Serial.println(F("Use WASD to move to each square center."));
+    Serial.println(F("Press x to stop before saving each point."));
+    Serial.println(F("Then press k to save that corner."));
     Serial.println();
 
     promptCalibrationStep();
@@ -94,8 +94,8 @@ namespace Calibration {
 
   void recordCalibrationPoint() {
     if (!calibrationMode) {
-      Serial.println("Not in calibration mode.");
-      Serial.println("Press c to start 4-corner calibration.");
+      Serial.println(F("Not in calibration mode."));
+      Serial.println(F("Press c to start 4-corner calibration."));
       return;
     }
 
@@ -105,24 +105,24 @@ namespace Calibration {
 
     if (calibrationStep == 0) {
       cornerA1 = currentPoint;
-      Serial.print("Saved a1: ");
+      Serial.print(F("Saved a1: "));
     }
     else if (calibrationStep == 1) {
       cornerH1 = currentPoint;
-      Serial.print("Saved h1: ");
+      Serial.print(F("Saved h1: "));
     }
     else if (calibrationStep == 2) {
       cornerA8 = currentPoint;
-      Serial.print("Saved a8: ");
+      Serial.print(F("Saved a8: "));
     }
     else if (calibrationStep == 3) {
       cornerH8 = currentPoint;
-      Serial.print("Saved h8: ");
+      Serial.print(F("Saved h8: "));
     }
 
-    Serial.print("X = ");
+    Serial.print(F("X = "));
     Serial.print(currentPoint.x);
-    Serial.print(", Y = ");
+    Serial.print(F(", Y = "));
     Serial.println(currentPoint.y);
 
     calibrationStep++;
@@ -143,7 +143,7 @@ namespace Calibration {
         stored.version != CALIBRATION_VERSION ||
         stored.checksum != calibrationChecksum(stored)) {
       boardCalibrated = false;
-      Serial.println("No saved calibration found.");
+      Serial.println(F("No saved calibration found."));
       return false;
     }
 
@@ -155,7 +155,7 @@ namespace Calibration {
     }
 
     finishFourCornerCalibration(false);
-    Serial.println("Calibration loaded from EEPROM.");
+    Serial.println(F("Calibration loaded from EEPROM."));
     return true;
   }
 
@@ -178,47 +178,47 @@ namespace Calibration {
 
   void printGrid() {
     if (!boardCalibrated) {
-      Serial.println("Board not calibrated yet.");
-      Serial.println("Use c for 4-corner calibration.");
+      Serial.println(F("Board not calibrated yet."));
+      Serial.println(F("Use c for 4-corner calibration."));
       return;
     }
 
     Serial.println();
-    Serial.println("4-corner calibration data:");
+    Serial.println(F("4-corner calibration data:"));
 
-    Serial.print("a1 = (");
+    Serial.print(F("a1 = ("));
     Serial.print(cornerA1.x);
-    Serial.print(", ");
+    Serial.print(F(", "));
     Serial.print(cornerA1.y);
-    Serial.println(")");
+    Serial.println(F(")"));
 
-    Serial.print("h1 = (");
+    Serial.print(F("h1 = ("));
     Serial.print(cornerH1.x);
-    Serial.print(", ");
+    Serial.print(F(", "));
     Serial.print(cornerH1.y);
-    Serial.println(")");
+    Serial.println(F(")"));
 
-    Serial.print("a8 = (");
+    Serial.print(F("a8 = ("));
     Serial.print(cornerA8.x);
-    Serial.print(", ");
+    Serial.print(F(", "));
     Serial.print(cornerA8.y);
-    Serial.println(")");
+    Serial.println(F(")"));
 
-    Serial.print("h8 = (");
+    Serial.print(F("h8 = ("));
     Serial.print(cornerH8.x);
-    Serial.print(", ");
+    Serial.print(F(", "));
     Serial.print(cornerH8.y);
-    Serial.println(")");
+    Serial.println(F(")"));
 
     Serial.println();
-    Serial.print("Average square spacing X = ");
+    Serial.print(F("Average square spacing X = "));
     Serial.println(squareSpacingX);
 
-    Serial.print("Average square spacing Y = ");
+    Serial.print(F("Average square spacing Y = "));
     Serial.println(squareSpacingY);
 
     Serial.println();
-    Serial.println("Approx square centers:");
+    Serial.println(F("Approx square centers:"));
 
     for (int rank = 0; rank < 8; rank++) {
       for (int file = 0; file < 8; file++) {
@@ -232,11 +232,11 @@ namespace Calibration {
 
         Serial.print(fileChar);
         Serial.print(rankChar);
-        Serial.print("(");
+        Serial.print(F("("));
         Serial.print(squareX);
-        Serial.print(",");
+        Serial.print(F(","));
         Serial.print(squareY);
-        Serial.print(") ");
+        Serial.print(F(") "));
       }
 
       Serial.println();
@@ -267,8 +267,8 @@ namespace Calibration {
 
   bool moveToSquare(char file, char rank) {
     if (!boardCalibrated) {
-      Serial.println("Board not calibrated yet.");
-      Serial.println("Use c for 4-corner calibration first.");
+      Serial.println(F("Board not calibrated yet."));
+      Serial.println(F("Use c for 4-corner calibration first."));
       return false;
     }
 
@@ -276,16 +276,16 @@ namespace Calibration {
     long targetY;
 
     if (!squareToPosition(file, rank, targetX, targetY)) {
-      Serial.println("Invalid square.");
+      Serial.println(F("Invalid square."));
       return false;
     }
 
-    Serial.print("Going to ");
+    Serial.print(F("Going to "));
     Serial.print(file);
     Serial.print(rank);
-    Serial.print(" -> X=");
+    Serial.print(F(" -> X="));
     Serial.print(targetX);
-    Serial.print(", Y=");
+    Serial.print(F(", Y="));
     Serial.println(targetY);
 
     bool success = Motion::moveTo(targetX, targetY);
@@ -297,14 +297,14 @@ namespace Calibration {
 
   void testAllSquares() {
     if (!boardCalibrated) {
-      Serial.println("Board not calibrated yet.");
-      Serial.println("Use c for 4-corner calibration first.");
+      Serial.println(F("Board not calibrated yet."));
+      Serial.println(F("Use c for 4-corner calibration first."));
       return;
     }
 
     Serial.println();
-    Serial.println("Starting 64-square test.");
-    Serial.println("Send x during movement to abort.");
+    Serial.println(F("Starting 64-square test."));
+    Serial.println(F("Send x during movement to abort."));
     Serial.println();
 
     for (int rankIndex = 0; rankIndex < 8; rankIndex++) {
@@ -332,19 +332,19 @@ namespace Calibration {
       }
     }
 
-    Serial.println("64-square test complete.");
+    Serial.println(F("64-square test complete."));
   }
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
     if (!boardCalibrated) {
-      Serial.println("Board not calibrated yet.");
+      Serial.println(F("Board not calibrated yet."));
       return false;
     }
 
-    Serial.print("Moving piece from ");
+    Serial.print(F("Moving piece from "));
     Serial.print(fromFile);
     Serial.print(fromRank);
-    Serial.print(" to ");
+    Serial.print(F(" to "));
     Serial.print(toFile);
     Serial.println(toRank);
 
@@ -374,18 +374,18 @@ namespace Calibration {
 
     BoardState::movePiece(fromFile, fromRank, toFile, toRank);
 
-    Serial.println("Piece move complete.");
+    Serial.println(F("Piece move complete."));
     return true;
   }
 
   bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
     if (!boardCalibrated) {
-      Serial.println("Board not calibrated yet.");
+      Serial.println(F("Board not calibrated yet."));
       return false;
     }
 
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
-      Serial.println("Invalid move square.");
+      Serial.println(F("Invalid move square."));
       return false;
     }
 
@@ -401,10 +401,10 @@ namespace Calibration {
     squareToPosition(fromFile, fromRank, fromX, fromY);
     squareToPosition(toFile, toRank, toX, toY);
 
-    Serial.print("Safe moving piece from ");
+    Serial.print(F("Safe moving piece from "));
     Serial.print(fromFile);
     Serial.print(fromRank);
-    Serial.print(" to ");
+    Serial.print(F(" to "));
     Serial.print(toFile);
     Serial.println(toRank);
 
@@ -421,31 +421,44 @@ namespace Calibration {
     int dFile = toFileIndex - fromFileIndex;
     int dRank = toRankIndex - fromRankIndex;
 
-    // If mostly vertical, travel through a file lane between columns.
+    // Stay on tile borders between pickup and drop-off. The only movement
+    // inside a tile is the half-tile exit from the source center and the
+    // half-tile entry into the destination center.
     if (abs(dRank) >= abs(dFile)) {
-      float laneFile;
-
-      if (fromFileIndex < 7) {
-        laneFile = fromFileIndex + 0.5;
-      }
-      else {
+      float laneFile = fromFileIndex + 0.5;
+      if (dFile < 0 || (dFile == 0 && fromFileIndex == 7)) {
         laneFile = fromFileIndex - 0.5;
       }
 
-      long laneStartX, laneStartY;
-      long laneEndX, laneEndY;
+      float laneRank = toRankIndex - 0.5;
+      if (dRank < 0 || (dRank == 0 && toRankIndex == 0)) {
+        laneRank = toRankIndex + 0.5;
+      }
 
-      gridToPosition(laneFile, fromRankIndex, laneStartX, laneStartY);
-      gridToPosition(laneFile, toRankIndex, laneEndX, laneEndY);
+      long sourceBorderX, sourceBorderY;
+      long borderCornerX, borderCornerY;
+      long destinationBorderX, destinationBorderY;
 
-      Serial.println("Using vertical lane path.");
+      gridToPosition(laneFile, fromRankIndex,
+                     sourceBorderX, sourceBorderY);
+      gridToPosition(laneFile, laneRank,
+                     borderCornerX, borderCornerY);
+      gridToPosition(toFileIndex, laneRank,
+                     destinationBorderX, destinationBorderY);
 
-      if (!Motion::moveTo(laneStartX, laneStartY)) {
+      Serial.println(F("Using vertical lane path."));
+
+      if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
         Magnet::off();
         return false;
       }
 
-      if (!Motion::moveTo(laneEndX, laneEndY)) {
+      if (!Motion::moveTo(borderCornerX, borderCornerY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
         Magnet::off();
         return false;
       }
@@ -456,31 +469,41 @@ namespace Calibration {
       }
     }
 
-    // If mostly horizontal, travel through a rank lane between rows.
     else {
-      float laneRank;
-
-      if (fromRankIndex < 7) {
-        laneRank = fromRankIndex + 0.5;
-      }
-      else {
+      float laneRank = fromRankIndex + 0.5;
+      if (dRank < 0 || (dRank == 0 && fromRankIndex == 7)) {
         laneRank = fromRankIndex - 0.5;
       }
 
-      long laneStartX, laneStartY;
-      long laneEndX, laneEndY;
+      float laneFile = toFileIndex - 0.5;
+      if (dFile < 0 || (dFile == 0 && toFileIndex == 0)) {
+        laneFile = toFileIndex + 0.5;
+      }
 
-      gridToPosition(fromFileIndex, laneRank, laneStartX, laneStartY);
-      gridToPosition(toFileIndex, laneRank, laneEndX, laneEndY);
+      long sourceBorderX, sourceBorderY;
+      long borderCornerX, borderCornerY;
+      long destinationBorderX, destinationBorderY;
 
-      Serial.println("Using horizontal lane path.");
+      gridToPosition(fromFileIndex, laneRank,
+                     sourceBorderX, sourceBorderY);
+      gridToPosition(laneFile, laneRank,
+                     borderCornerX, borderCornerY);
+      gridToPosition(laneFile, toRankIndex,
+                     destinationBorderX, destinationBorderY);
 
-      if (!Motion::moveTo(laneStartX, laneStartY)) {
+      Serial.println(F("Using horizontal lane path."));
+
+      if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
         Magnet::off();
         return false;
       }
 
-      if (!Motion::moveTo(laneEndX, laneEndY)) {
+      if (!Motion::moveTo(borderCornerX, borderCornerY)) {
+        Magnet::off();
+        return false;
+      }
+
+      if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
         Magnet::off();
         return false;
       }
@@ -496,7 +519,7 @@ namespace Calibration {
 
     BoardState::movePiece(fromFile, fromRank, toFile, toRank);
 
-    Serial.println("Safe piece move complete.");
+    Serial.println(F("Safe piece move complete."));
     return true;
   }
 }
@@ -507,16 +530,16 @@ static void promptCalibrationStep() {
   Serial.println();
 
   if (calibrationStep == 0) {
-    Serial.println("Move to center of a1, then press k.");
+    Serial.println(F("Move to center of a1, then press k."));
   }
   else if (calibrationStep == 1) {
-    Serial.println("Move to center of h1, then press k.");
+    Serial.println(F("Move to center of h1, then press k."));
   }
   else if (calibrationStep == 2) {
-    Serial.println("Move to center of a8, then press k.");
+    Serial.println(F("Move to center of a8, then press k."));
   }
   else if (calibrationStep == 3) {
-    Serial.println("Move to center of h8, then press k.");
+    Serial.println(F("Move to center of h8, then press k."));
   }
 
   Serial.println();
@@ -533,13 +556,13 @@ static void finishFourCornerCalibration(bool saveToEeprom) {
   squareSpacingY = ((cornerA8.y - cornerA1.y) + (cornerH8.y - cornerH1.y)) / 14.0;
 
   Serial.println();
-  Serial.println("4-corner calibration complete.");
-  Serial.println("The board grid has been generated.");
+  Serial.println(F("4-corner calibration complete."));
+  Serial.println(F("The board grid has been generated."));
   Serial.println();
 
   if (saveToEeprom) {
     saveCalibration();
-    Serial.println("Calibration saved to EEPROM.");
+    Serial.println(F("Calibration saved to EEPROM."));
   }
 
   Calibration::printGrid();

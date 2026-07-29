@@ -56,27 +56,27 @@ namespace BoardState {
       board[6][file] = 'p';
     }
 
-    Serial.println("Board state reset to starting position.");
+    Serial.println(F("Board state reset to starting position."));
   }
 
   void print() {
     Serial.println();
-    Serial.println("  +-----------------+");
+    Serial.println(F("  +-----------------+"));
 
     for (int rank = 7; rank >= 0; rank--) {
       Serial.print(rank + 1);
-      Serial.print(" | ");
+      Serial.print(F(" | "));
 
       for (int file = 0; file < 8; file++) {
         Serial.print(board[rank][file]);
-        Serial.print(" ");
+        Serial.print(F(" "));
       }
 
-      Serial.println("|");
+      Serial.println(F("|"));
     }
 
-    Serial.println("  +-----------------+");
-    Serial.println("    a b c d e f g h");
+    Serial.println(F("  +-----------------+"));
+    Serial.println(F("    a b c d e f g h"));
     Serial.println();
   }
 
@@ -93,7 +93,7 @@ namespace BoardState {
 
   void setPiece(char file, char rank, char piece) {
     if (!isValidSquare(file, rank)) {
-      Serial.println("Invalid square.");
+      Serial.println(F("Invalid square."));
       return;
     }
 
@@ -105,7 +105,7 @@ namespace BoardState {
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
-      Serial.println("Invalid move square.");
+      Serial.println(F("Invalid move square."));
       return false;
     }
 
@@ -119,7 +119,7 @@ namespace BoardState {
     char capturedPiece = board[toRankIndex][toFileIndex];
 
     if (movingPiece == '.') {
-      Serial.print("Warning: no piece at ");
+      Serial.print(F("Warning: no piece at "));
       Serial.print(fromFile);
       Serial.println(fromRank);
       return false;
@@ -128,15 +128,15 @@ namespace BoardState {
     board[toRankIndex][toFileIndex] = movingPiece;
     board[fromRankIndex][fromFileIndex] = '.';
 
-    Serial.print("Board updated: ");
+    Serial.print(F("Board updated: "));
     Serial.print(fromFile);
     Serial.print(fromRank);
-    Serial.print(" -> ");
+    Serial.print(F(" -> "));
     Serial.print(toFile);
     Serial.println(toRank);
 
     if (capturedPiece != '.') {
-      Serial.print("Captured piece logged: ");
+      Serial.print(F("Captured piece logged: "));
       Serial.println(capturedPiece);
     }
 
