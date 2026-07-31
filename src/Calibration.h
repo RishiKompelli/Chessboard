@@ -30,6 +30,8 @@ namespace Calibration {
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank);
   bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank);
+
+  bool loadCalibration();
 }
 
 #endif
