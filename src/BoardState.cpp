@@ -103,6 +103,10 @@ namespace BoardState {
     board[rankIndex][fileIndex] = piece;
   }
 
+  void clearSquare(char file, char rank) {
+    setPiece(file, rank, '.');
+  }
+
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
       Serial.println(F("Invalid move square."));

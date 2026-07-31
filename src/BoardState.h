@@ -11,6 +11,8 @@ namespace BoardState {
   void setPiece(char file, char rank, char piece);
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank);
+
+  void clearSquare(char file, char rank);
 }
 
 #endif

@@ -32,6 +32,20 @@ namespace Calibration {
   bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank);
 
   bool loadCalibration();
+
+  void setCurrentPositionAsA1();
+  void printStatus();
+
+  bool capturePiece(char fromFile, char fromRank, char toFile, char toRank, char capturedColor);
+
+  bool castleKingside(char color);
+  bool castleQueenside(char color);
+
+  bool promotePiece(char fromFile, char fromRank, char toFile, char toRank, char promotedPiece);
+
+  bool enPassant(char fromFile, char fromRank, char toFile, char toRank, char capturedFile, char capturedRank, char capturedColor);
+
+  void resetCaptureParking();
 }
 
 #endif
