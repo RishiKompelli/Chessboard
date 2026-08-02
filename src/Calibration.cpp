@@ -120,20 +120,28 @@ namespace Calibration {
     currentPoint.y = Motion::getY();
 
     if (calibrationStep == 0) {
-      cornerA1 = currentPoint;
-      Serial.print(F("Saved a1: "));
+      cornerA1.x = Motion::getX();
+      cornerA1.y = Motion::getY();
+      Serial.println(F("Saved a1."));
+      Serial.println(F("Now move to a8 and press k."));
     }
     else if (calibrationStep == 1) {
-      cornerH1 = currentPoint;
-      Serial.print(F("Saved h1: "));
+      cornerA8.x = Motion::getX();
+      cornerA8.y = Motion::getY();
+      Serial.println(F("Saved a8."));
+      Serial.println(F("Now move to h8 and press k."));
     }
     else if (calibrationStep == 2) {
-      cornerA8 = currentPoint;
-      Serial.print(F("Saved a8: "));
+      cornerH8.x = Motion::getX();
+      cornerH8.y = Motion::getY();
+      Serial.println(F("Saved h8."));
+      Serial.println(F("Now move to h1 and press k."));
     }
     else if (calibrationStep == 3) {
-      cornerH8 = currentPoint;
-      Serial.print(F("Saved h8: "));
+      cornerH1.x = Motion::getX();
+      cornerH1.y = Motion::getY();
+      Serial.println(F("Saved h1."));
+      finishFourCornerCalibration();
     }
 
     Serial.print(F("X = "));
