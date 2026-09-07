@@ -62,7 +62,6 @@ def abort_arduino_input(ser):
     Clears any stuck Arduino input mode before sending a real command.
     Requires main.cpp to support the ! command.
     """
-
     ser.reset_input_buffer()
 
     ser.write(b"!\n")
@@ -85,8 +84,7 @@ def send_arduino_command(ser, command, expected_ok=None, timeout=600):
     print()
     print(f"> Arduino command: {command}")
 
-    # Very important:
-    # This prevents Arduino from staying stuck in r/y/l/n/e input mode.
+    # Clear any half-finished input mode before sending command
     abort_arduino_input(ser)
 
     ser.reset_input_buffer()
@@ -176,7 +174,6 @@ def jog_mode(ser):
         if msvcrt.kbhit():
             key = msvcrt.getwch()
 
-            # Arrow keys come in as two characters on Windows
             if key in ("\x00", "\xe0"):
                 arrow = msvcrt.getwch()
 
@@ -191,7 +188,6 @@ def jog_mode(ser):
                 else:
                     continue
 
-            # Escape exits jog mode
             if key == "\x1b":
                 send_raw_char(ser, "x")
                 time.sleep(0.05)
@@ -200,7 +196,6 @@ def jog_mode(ser):
                 print("Exiting jog mode.")
                 return
 
-            # Space stops motion
             if key == " ":
                 key = "x"
 
@@ -217,7 +212,6 @@ def jog_mode(ser):
             ]
 
             if key in allowed_keys:
-                # Do not spam repeated movement keys
                 if key in ["w", "a", "s", "d"] and key == last_sent:
                     continue
 
@@ -237,8 +231,7 @@ def jog_mode(ser):
                     print("Moving:", key)
                 else:
                     print("Sent:", key)
-                    if key not in ["w", "a", "s", "d"]:
-                        last_sent = None
+                    last_sent = None
 
             else:
                 print("Ignored key:", repr(key))
@@ -249,22 +242,6 @@ def jog_mode(ser):
 # ---------------- ARDUINO COMMAND PARSING ----------------
 
 def normalize_manual_command(text):
-    """
-    Lets you type nicer commands like:
-      r e2e4
-      y e4d5b
-      l wk
-      n e7e8q
-      e e5d6d5b
-
-    Converts them to:
-      re2e4
-      ye4d5b
-      lwk
-      ne7e8q
-      ee5d6d5b
-    """
-
     text = text.strip().lower()
 
     if text == "":
@@ -389,8 +366,6 @@ def build_arduino_command(board, move):
             "description": "promotion",
         }
 
-        # Promotion capture still needs the physical captured piece removed first
-        # unless your Arduino promotion command also handles parking.
         if board.is_capture(move):
             move_info["manual_remove_square"] = to_square
 
@@ -439,30 +414,13 @@ def execute_move_on_arduino(ser, board, move, label):
     print(f"{label} move type: {move_info['description']}")
     print(f"{label} move command: {move_info['command']}")
 
-    # Safety before every move.
-    # Do not wait for OK here because older Arduino code may only print MAGNET FORCE OFF.
-    send_arduino_command(
-        ser,
-        "f",
-        expected_ok=None,
-        timeout=2
-    )
-
-    time.sleep(0.3)
-
+    # Do not send separate f commands here.
+    # Arduino controls the full magnet sequence inside Calibration.cpp.
     move_ok = send_arduino_command(
         ser,
         move_info["command"],
         expected_ok=move_info["expected_ok"],
         timeout=600
-    )
-
-    # Safety after every move.
-    send_arduino_command(
-        ser,
-        "f",
-        expected_ok=None,
-        timeout=2
     )
 
     return move_ok
@@ -471,7 +429,6 @@ def execute_move_on_arduino(ser, board, move, label):
 def parse_move(board, text):
     text = text.strip()
 
-    # UCI format: e2e4, g1f3, e7e8q
     try:
         move = chess.Move.from_uci(text.lower())
         if move in board.legal_moves:
@@ -479,7 +436,6 @@ def parse_move(board, text):
     except ValueError:
         pass
 
-    # SAN format: Nf3, O-O, exd5, Qh5+
     try:
         move = board.parse_san(text)
         if move in board.legal_moves:
@@ -520,10 +476,6 @@ def play_game(ser, engine, human_color=chess.WHITE):
     print("If Arduino status said Board calibrated: no, stop and recalibrate before playing.")
     input("Press Enter to continue if Board calibrated was yes...")
 
-    # Safety magnet-off command
-    send_arduino_command(ser, "f", expected_ok=None, timeout=2)
-
-    # Reset Arduino board state only. This should NOT clear calibration.
     send_arduino_command(ser, "i", expected_ok=None, timeout=5)
 
     print()

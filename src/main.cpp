@@ -6,36 +6,6 @@
 #include "Magnet.h"
 #include "BoardState.h"
 
-// ---------------- SERIAL INPUT MODES ----------------
-//
-// Single-char commands:
-//   !       = abort/reset current input mode
-//   w/a/s/d = start jogging
-//   x       = stop jogging and force magnet off
-//   f/o     = force magnet off
-//   v       = toggle magnet
-//   q       = set current position as a1 without clearing saved calibration
-//   z       = zero position AND clear saved calibration
-//   c       = start 4-corner calibration
-//   k       = save current calibration point
-//   p       = print current position
-//   g       = print grid
-//   t       = test all squares
-//   u       = status
-//   b       = print board state
-//   i       = reset board state
-//   h       = help
-//
-// Buffered move commands:
-//   r + e2e4       normal/safe move
-//   y + e4d5b      capture, captured piece is black
-//   l + wk         white kingside castle
-//   l + wq         white queenside castle
-//   l + bk         black kingside castle
-//   l + bq         black queenside castle
-//   n + e7e8q      promotion
-//   e + e5d6d5b    en passant
-
 char inputMode = 0;
 char inputBuffer[10];
 int inputIndex = 0;
@@ -45,14 +15,13 @@ int inputTargetLength = 0;
 int jogDirX = 0;
 int jogDirY = 0;
 
-long jogStepAmount = 20;
+// Slower jog step for easier calibration and safer movement
+long jogStepAmount = 10;
 const long MIN_JOG_STEP_AMOUNT = 2;
 const long MAX_JOG_STEP_AMOUNT = 300;
 
 unsigned long lastJogTime = 0;
-const unsigned long JOG_INTERVAL_MS = 5;
-
-// ---------------- FUNCTION DECLARATIONS ----------------
+const unsigned long JOG_INTERVAL_MS = 8;
 
 void printHelp();
 
@@ -68,8 +37,6 @@ void updateJog();
 
 void forceMagnetOffCommand();
 void toggleMagnetCommand();
-
-// ---------------- SETUP / LOOP ----------------
 
 void setup() {
   Serial.begin(9600);
@@ -101,8 +68,6 @@ void loop() {
   updateJog();
 }
 
-// ---------------- SERIAL COMMAND HANDLING ----------------
-
 void handleSerialChar(char ch) {
   if (ch == '\r' || ch == '\n' || ch == ' ') {
     return;
@@ -110,9 +75,7 @@ void handleSerialChar(char ch) {
 
   ch = tolower(ch);
 
-  // IMPORTANT:
-  // This must happen before the inputMode check.
-  // It lets Python escape from a half-finished move command.
+  // Emergency cancel. This works even if Arduino is stuck in move-input mode.
   if (ch == '!') {
     clearBufferedCommand();
     stopJog(true);
@@ -305,7 +268,7 @@ void addBufferedChar(char ch) {
 
 void executeBufferedCommand() {
   Magnet::forceOff();
-  delay(100);
+  delay(300);
 
   bool success = false;
 
@@ -320,6 +283,7 @@ void executeBufferedCommand() {
     success = Calibration::movePieceSafe(fromFile, fromRank, toFile, toRank);
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK MOVE_COMMAND"));
@@ -341,6 +305,7 @@ void executeBufferedCommand() {
     success = Calibration::capturePiece(fromFile, fromRank, toFile, toRank, capturedColor);
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK CAPTURE_COMMAND"));
@@ -368,6 +333,7 @@ void executeBufferedCommand() {
     }
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK CASTLE_COMMAND"));
@@ -389,6 +355,7 @@ void executeBufferedCommand() {
     success = Calibration::promotePiece(fromFile, fromRank, toFile, toRank, promotedPiece);
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK PROMOTION_COMMAND"));
@@ -415,6 +382,7 @@ void executeBufferedCommand() {
                                      capturedColor);
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK EN_PASSANT_COMMAND"));

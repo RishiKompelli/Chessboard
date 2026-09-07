@@ -1,96 +1,69 @@
 #include "Motion.h"
+#include <Arduino.h>
 
-// ---------- PINS ----------
-// Motor A
+// ---------------- PIN SETUP ----------------
+//
+// Motor A STEP = D3
+// Motor A DIR  = D2
+// Motor B STEP = D5
+// Motor B DIR  = D4
+// ENABLE       = D8
+
+const int A_DIR_PIN = 2;
 const int A_STEP_PIN = 3;
-const int A_DIR_PIN  = 2;
 
-// Motor B
+const int B_DIR_PIN = 4;
 const int B_STEP_PIN = 5;
-const int B_DIR_PIN  = 4;
 
 const int ENABLE_PIN = 8;
 
-// ---------- DIRECTION FIXES ----------
-const bool MOTOR_A_INVERT = false;
-const bool MOTOR_B_INVERT = false;
+// Bigger number = slower movement.
+// Start around 1400. If pieces still slip, try 1800 or 2200.
+int stepDelayUs = 1400;
 
-const bool X_AXIS_INVERT = true;
-const bool Y_AXIS_INVERT = false;
+// Pulse width for STEP pins
+const int STEP_PULSE_US = 5;
 
-// ---------- MOVEMENT STATE ----------
-int stepDelay = 700; // lower = faster
+// Pause after finishing each Motion::moveTo call
+const int MOVE_SETTLE_DELAY_MS = 120;
 
-bool moving = false;
+// Change these if your directions are backwards
+const bool INVERT_MOTOR_A = false;
+const bool INVERT_MOTOR_B = false;
 
-int jogX = 0;
-int jogY = 0;
-
-// Virtual board position, not motor position.
+// Software position tracking
 long currentX = 0;
 long currentY = 0;
 
-// ---------- INTERNAL FUNCTIONS ----------
-void coreXYStep(int xDir, int yDir);
-int applyInvert(int dir, bool invert);
-bool checkAbort();
+static void stepMotorA(int dir);
+static void stepMotorB(int dir);
+static void stepCoreXYStep(int xDir, int yDir);
 
 namespace Motion {
 
   void begin() {
-    pinMode(A_STEP_PIN, OUTPUT);
     pinMode(A_DIR_PIN, OUTPUT);
+    pinMode(A_STEP_PIN, OUTPUT);
 
-    pinMode(B_STEP_PIN, OUTPUT);
     pinMode(B_DIR_PIN, OUTPUT);
+    pinMode(B_STEP_PIN, OUTPUT);
 
     pinMode(ENABLE_PIN, OUTPUT);
 
-    // A4988: LOW = enabled
+    digitalWrite(A_STEP_PIN, LOW);
+    digitalWrite(B_STEP_PIN, LOW);
+
+    // A4988 enable is active-low
     digitalWrite(ENABLE_PIN, LOW);
 
-    stop();
-  }
-
-  void update() {
-    if (moving) {
-      coreXYStep(jogX, jogY);
-    }
-  }
-
-  void setJog(int xDirection, int yDirection) {
-    jogX = xDirection;
-    jogY = yDirection;
-    moving = true;
-  }
-
-  void stop() {
-    moving = false;
-    jogX = 0;
-    jogY = 0;
-  }
-
-  void speedUp() {
-    stepDelay -= 100;
-
-    if (stepDelay < 150) {
-      stepDelay = 150;
-    }
-
-    Serial.print(F("Speed up. Step delay = "));
-    Serial.println(stepDelay);
-  }
-
-  void slowDown() {
-    stepDelay += 100;
-
-    Serial.print(F("Slow down. Step delay = "));
-    Serial.println(stepDelay);
+    Serial.println(F("Motion system ready."));
   }
 
   void zeroPosition() {
     currentX = 0;
     currentY = 0;
+
+    Serial.println(F("Motion position zeroed."));
   }
 
   long getX() {
@@ -101,165 +74,117 @@ namespace Motion {
     return currentY;
   }
 
-  int getStepDelay() {
-    return stepDelay;
-  }
-
-  void rawMotorTest(char motor, int direction, long steps) {
-    stop();
-
-    int stepPin;
-    int dirPin;
-
-    if (motor == 'A') {
-      stepPin = A_STEP_PIN;
-      dirPin = A_DIR_PIN;
-      Serial.println(F("Testing Motor A"));
-    }
-    else if (motor == 'B') {
-      stepPin = B_STEP_PIN;
-      dirPin = B_DIR_PIN;
-      Serial.println(F("Testing Motor B"));
-    }
-    else {
-      Serial.println(F("Invalid motor."));
-      return;
-    }
-
-    Serial.print(F("Direction = "));
-    Serial.println(direction);
-
-    digitalWrite(dirPin, direction > 0 ? HIGH : LOW);
-    delay(10);
-
-    for (long i = 0; i < steps; i++) {
-      digitalWrite(stepPin, HIGH);
-      delayMicroseconds(stepDelay);
-      digitalWrite(stepPin, LOW);
-      delayMicroseconds(stepDelay);
-    }
-
-    Serial.println(F("Raw motor test done."));
-  }
-
   bool moveTo(long targetX, long targetY) {
-    stop();
+    long dx = targetX - currentX;
+    long dy = targetY - currentY;
 
-    Serial.print(F("Moving to X="));
-    Serial.print(targetX);
-    Serial.print(F(", Y="));
-    Serial.println(targetY);
+    long stepsX = abs(dx);
+    long stepsY = abs(dy);
 
-    // Move X first.
-    while (currentX != targetX) {
-      if (checkAbort()) {
-        Serial.println(F("Move aborted."));
-        stop();
-        return false;
-      }
+    int xDir = 0;
+    int yDir = 0;
 
-      int xDir = targetX > currentX ? 1 : -1;
-      coreXYStep(xDir, 0);
+    if (dx > 0) xDir = 1;
+    else if (dx < 0) xDir = -1;
+
+    if (dy > 0) yDir = 1;
+    else if (dy < 0) yDir = -1;
+
+    long totalSteps = max(stepsX, stepsY);
+
+    if (totalSteps == 0) {
+      delay(MOVE_SETTLE_DELAY_MS);
+      return true;
     }
 
-    // Then move Y.
-    while (currentY != targetY) {
-      if (checkAbort()) {
-        Serial.println(F("Move aborted."));
-        stop();
-        return false;
+    long errorX = 0;
+    long errorY = 0;
+
+    for (long i = 0; i < totalSteps; i++) {
+      errorX += stepsX;
+      errorY += stepsY;
+
+      int doX = 0;
+      int doY = 0;
+
+      if (errorX >= totalSteps) {
+        doX = xDir;
+        errorX -= totalSteps;
       }
 
-      int yDir = targetY > currentY ? 1 : -1;
-      coreXYStep(0, yDir);
+      if (errorY >= totalSteps) {
+        doY = yDir;
+        errorY -= totalSteps;
+      }
+
+      stepCoreXYStep(doX, doY);
+
+      currentX += doX;
+      currentY += doY;
     }
 
-    Serial.println(F("Move complete."));
+    delay(MOVE_SETTLE_DELAY_MS);
     return true;
   }
 }
 
-// ---------- COREXY MOTION ----------
+// ---------------- COREXY STEPPING ----------------
+//
+// CoreXY mapping:
+// +X => A +, B +
+// -X => A -, B -
+// +Y => A +, B -
+// -Y => A -, B +
 
-void coreXYStep(int xDir, int yDir) {
-  if (xDir == 0 && yDir == 0) {
-    return;
+static void stepCoreXYStep(int xDir, int yDir) {
+  int aDir = xDir + yDir;
+  int bDir = xDir - yDir;
+
+  if (aDir > 0) {
+    stepMotorA(1);
+  }
+  else if (aDir < 0) {
+    stepMotorA(-1);
   }
 
-  int logicalX = xDir;
-  int logicalY = yDir;
-
-  int physicalX = X_AXIS_INVERT ? -logicalX : logicalX;
-  int physicalY = Y_AXIS_INVERT ? -logicalY : logicalY;
-
-  /*
-    CoreXY transform:
-
-    Motor A = X + Y
-    Motor B = X - Y
-  */
-
-  int motorADir = physicalX + physicalY;
-  int motorBDir = physicalX - physicalY;
-
-  if (motorADir > 0) motorADir = 1;
-  if (motorADir < 0) motorADir = -1;
-
-  if (motorBDir > 0) motorBDir = 1;
-  if (motorBDir < 0) motorBDir = -1;
-
-  motorADir = applyInvert(motorADir, MOTOR_A_INVERT);
-  motorBDir = applyInvert(motorBDir, MOTOR_B_INVERT);
-
-  if (motorADir != 0) {
-    digitalWrite(A_DIR_PIN, motorADir > 0 ? HIGH : LOW);
+  if (bDir > 0) {
+    stepMotorB(1);
   }
-
-  if (motorBDir != 0) {
-    digitalWrite(B_DIR_PIN, motorBDir > 0 ? HIGH : LOW);
+  else if (bDir < 0) {
+    stepMotorB(-1);
   }
-
-  if (motorADir != 0) {
-    digitalWrite(A_STEP_PIN, HIGH);
-  }
-
-  if (motorBDir != 0) {
-    digitalWrite(B_STEP_PIN, HIGH);
-  }
-
-  delayMicroseconds(stepDelay);
-
-  if (motorADir != 0) {
-    digitalWrite(A_STEP_PIN, LOW);
-  }
-
-  if (motorBDir != 0) {
-    digitalWrite(B_STEP_PIN, LOW);
-  }
-
-  delayMicroseconds(stepDelay);
-
-  // Track logical board coordinates.
-  currentX += logicalX;
-  currentY += logicalY;
 }
 
-int applyInvert(int dir, bool invert) {
-  if (invert) {
-    return -dir;
+static void stepMotorA(int dir) {
+  bool level = dir > 0;
+
+  if (INVERT_MOTOR_A) {
+    level = !level;
   }
 
-  return dir;
+  digitalWrite(A_DIR_PIN, level ? HIGH : LOW);
+  delayMicroseconds(3);
+
+  digitalWrite(A_STEP_PIN, HIGH);
+  delayMicroseconds(STEP_PULSE_US);
+  digitalWrite(A_STEP_PIN, LOW);
+
+  delayMicroseconds(stepDelayUs);
 }
 
-bool checkAbort() {
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
+static void stepMotorB(int dir) {
+  bool level = dir > 0;
 
-    if (cmd == 'x') {
-      return true;
-    }
+  if (INVERT_MOTOR_B) {
+    level = !level;
   }
 
-  return false;
+  digitalWrite(B_DIR_PIN, level ? HIGH : LOW);
+  delayMicroseconds(3);
+
+  digitalWrite(B_STEP_PIN, HIGH);
+  delayMicroseconds(STEP_PULSE_US);
+  digitalWrite(B_STEP_PIN, LOW);
+
+  delayMicroseconds(stepDelayUs);
 }
