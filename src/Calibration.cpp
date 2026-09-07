@@ -1,9 +1,12 @@
+#include <Arduino.h>
+#include <EEPROM.h>
+#include <math.h>
+#include <stddef.h>
+
 #include "Calibration.h"
 #include "Motion.h"
 #include "Magnet.h"
 #include "BoardState.h"
-#include <EEPROM.h>
-#include <math.h>
 
 struct PointF {
   float x;
@@ -68,6 +71,8 @@ static PointF lerp(PointF a, PointF b, float t);
 static bool gridToPosition(float fileCoord, float rankCoord, long &x, long &y);
 static bool squareToPosition(char file, char rank, long &x, long &y);
 
+static void makeSureMagnetIsOff(const __FlashStringHelper *reason);
+
 static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord,
                                 float targetFileCoord, float targetRankCoord);
 
@@ -101,6 +106,8 @@ namespace Calibration {
     calibrationStep = 0;
     clearSavedCalibration();
 
+    Magnet::forceOff();
+
     Serial.println(F("Position zeroed."));
     Serial.println(F("Existing board calibration cleared."));
     printPosition();
@@ -108,6 +115,7 @@ namespace Calibration {
 
   void setCurrentPositionAsA1() {
     Motion::zeroPosition();
+    Magnet::forceOff();
 
     Serial.println(F("OK POSITION_SET_A1"));
     Serial.println(F("Current position set to a1."));
@@ -123,6 +131,8 @@ namespace Calibration {
   }
 
   void startFourCornerCalibration() {
+    Magnet::forceOff();
+
     boardCalibrated = false;
     calibrationMode = true;
     calibrationStep = 0;
@@ -144,6 +154,8 @@ namespace Calibration {
       Serial.println(F("Press c to start 4-corner calibration."));
       return;
     }
+
+    Magnet::forceOff();
 
     PointF currentPoint;
     currentPoint.x = Motion::getX();
@@ -213,6 +225,8 @@ namespace Calibration {
 
   // Old quick calibration: assumes a1 is 0,0 and current position is h8
   void setBoardMax() {
+    Magnet::forceOff();
+
     cornerA1.x = 0;
     cornerA1.y = 0;
 
@@ -337,6 +351,9 @@ namespace Calibration {
     Serial.print(F("Magnet release hold ms: "));
     Serial.println(MAGNET_RELEASE_HOLD_MS);
 
+    Serial.print(F("Magnet state: "));
+    Serial.println(Magnet::isOn() ? F("on") : F("off"));
+
     Serial.println(F("============================="));
     Serial.println(F("OK STATUS"));
     Serial.println();
@@ -345,6 +362,7 @@ namespace Calibration {
   void resetCaptureParking() {
     whiteCapturedCount = 0;
     blackCapturedCount = 0;
+    Magnet::forceOff();
     Serial.println(F("Capture parking counters reset."));
   }
 
@@ -405,6 +423,8 @@ namespace Calibration {
       return;
     }
 
+    makeSureMagnetIsOff(F("testAllSquares"));
+
     Serial.println();
     Serial.println(F("Starting 64-square test."));
     Serial.println(F("Send x during movement to abort."));
@@ -417,7 +437,10 @@ namespace Calibration {
           char rank = '1' + rankIndex;
 
           bool success = moveToSquare(file, rank);
-          if (!success) return;
+          if (!success) {
+            Magnet::forceOff();
+            return;
+          }
 
           delay(SQUARE_PAUSE_MS);
         }
@@ -428,21 +451,28 @@ namespace Calibration {
           char rank = '1' + rankIndex;
 
           bool success = moveToSquare(file, rank);
-          if (!success) return;
+          if (!success) {
+            Magnet::forceOff();
+            return;
+          }
 
           delay(SQUARE_PAUSE_MS);
         }
       }
     }
 
+    Magnet::forceOff();
     Serial.println(F("64-square test complete."));
   }
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
     if (!boardCalibrated) {
       Serial.println(F("Board not calibrated yet."));
+      Magnet::forceOff();
       return false;
     }
+
+    makeSureMagnetIsOff(F("movePiece"));
 
     Serial.print(F("Moving piece from "));
     Serial.print(fromFile);
@@ -454,7 +484,7 @@ namespace Calibration {
     bool success = moveToSquare(fromFile, fromRank);
 
     if (!success) {
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
@@ -466,17 +496,17 @@ namespace Calibration {
     success = moveToSquare(toFile, toRank);
 
     if (!success) {
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
     if (!moveToReleaseOffset(fileToIndex(fromFile), rankToIndex(fromRank),
                              fileToIndex(toFile), rankToIndex(toRank))) {
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
-    Magnet::off();
+    Magnet::forceOff();
     delay(MAGNET_DROP_DELAY_MS);
 
     BoardState::movePiece(fromFile, fromRank, toFile, toRank);
@@ -488,11 +518,15 @@ namespace Calibration {
   bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
     if (!boardCalibrated) {
       Serial.println(F("Board not calibrated yet."));
+      Magnet::forceOff();
       return false;
     }
 
+    makeSureMagnetIsOff(F("movePieceSafe"));
+
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
       Serial.println(F("Invalid move square."));
+      Magnet::forceOff();
       return false;
     }
 
@@ -514,6 +548,7 @@ namespace Calibration {
       Serial.print(F("ERR NO_PIECE_AT "));
       Serial.print(fromFile);
       Serial.println(fromRank);
+      Magnet::forceOff();
       return false;
     }
 
@@ -527,7 +562,7 @@ namespace Calibration {
     Serial.println(toRank);
 
     if (!Motion::moveTo(fromX, fromY)) {
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
@@ -547,17 +582,17 @@ namespace Calibration {
       Serial.println(F("Using direct diagonal piece path."));
 
       if (!Motion::moveTo(toX, toY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!moveToReleaseOffset(fromFileIndex, fromRankIndex,
                                toFileIndex, toRankIndex)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
-      Magnet::off();
+      Magnet::forceOff();
       delay(MAGNET_DROP_DELAY_MS);
 
       BoardState::movePiece(fromFile, fromRank, toFile, toRank);
@@ -592,28 +627,28 @@ namespace Calibration {
       Serial.println(F("Using vertical lane path."));
 
       if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(borderCornerX, borderCornerY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(toX, toY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!moveToReleaseOffset(toFileIndex, laneRank,
                                toFileIndex, toRankIndex)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
     }
@@ -643,33 +678,33 @@ namespace Calibration {
       Serial.println(F("Using horizontal lane path."));
 
       if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(borderCornerX, borderCornerY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!Motion::moveTo(toX, toY)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
 
       if (!moveToReleaseOffset(laneFile, toRankIndex,
                                toFileIndex, toRankIndex)) {
-        Magnet::off();
+        Magnet::forceOff();
         return false;
       }
     }
 
-    Magnet::off();
+    Magnet::forceOff();
     delay(MAGNET_DROP_DELAY_MS);
 
     BoardState::movePiece(fromFile, fromRank, toFile, toRank);
@@ -683,11 +718,15 @@ namespace Calibration {
                     char capturedColor) {
     if (!boardCalibrated) {
       Serial.println(F("ERR NOT_CALIBRATED"));
+      Magnet::forceOff();
       return false;
     }
 
+    makeSureMagnetIsOff(F("capturePiece"));
+
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
       Serial.println(F("ERR INVALID_SQUARE"));
+      Magnet::forceOff();
       return false;
     }
 
@@ -699,7 +738,7 @@ namespace Calibration {
 
     if (!success) {
       Serial.println(F("ERR CAPTURED_PIECE_PARK_FAILED"));
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
@@ -707,10 +746,11 @@ namespace Calibration {
 
     if (!success) {
       Serial.println(F("ERR ATTACKING_PIECE_MOVE_FAILED"));
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
+    Magnet::forceOff();
     Serial.println(F("OK CAPTURE"));
     return true;
   }
@@ -718,32 +758,49 @@ namespace Calibration {
   bool castleKingside(char color) {
     if (!boardCalibrated) {
       Serial.println(F("ERR NOT_CALIBRATED"));
+      Magnet::forceOff();
       return false;
     }
+
+    makeSureMagnetIsOff(F("castleKingside"));
 
     bool success = false;
 
     if (color == 'w') {
       Serial.println(F("White kingside castle."));
       success = movePieceSafe('e', '1', 'g', '1');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
 
       success = movePieceSafe('h', '1', 'f', '1');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
     }
     else if (color == 'b') {
       Serial.println(F("Black kingside castle."));
       success = movePieceSafe('e', '8', 'g', '8');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
 
       success = movePieceSafe('h', '8', 'f', '8');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
     }
     else {
       Serial.println(F("ERR INVALID_COLOR"));
+      Magnet::forceOff();
       return false;
     }
 
+    Magnet::forceOff();
     Serial.println(F("OK CASTLE_KINGSIDE"));
     return true;
   }
@@ -751,32 +808,49 @@ namespace Calibration {
   bool castleQueenside(char color) {
     if (!boardCalibrated) {
       Serial.println(F("ERR NOT_CALIBRATED"));
+      Magnet::forceOff();
       return false;
     }
+
+    makeSureMagnetIsOff(F("castleQueenside"));
 
     bool success = false;
 
     if (color == 'w') {
       Serial.println(F("White queenside castle."));
       success = movePieceSafe('e', '1', 'c', '1');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
 
       success = movePieceSafe('a', '1', 'd', '1');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
     }
     else if (color == 'b') {
       Serial.println(F("Black queenside castle."));
       success = movePieceSafe('e', '8', 'c', '8');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
 
       success = movePieceSafe('a', '8', 'd', '8');
-      if (!success) return false;
+      if (!success) {
+        Magnet::forceOff();
+        return false;
+      }
     }
     else {
       Serial.println(F("ERR INVALID_COLOR"));
+      Magnet::forceOff();
       return false;
     }
 
+    Magnet::forceOff();
     Serial.println(F("OK CASTLE_QUEENSIDE"));
     return true;
   }
@@ -786,11 +860,15 @@ namespace Calibration {
                     char promotedPiece) {
     if (!boardCalibrated) {
       Serial.println(F("ERR NOT_CALIBRATED"));
+      Magnet::forceOff();
       return false;
     }
 
+    makeSureMagnetIsOff(F("promotePiece"));
+
     if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
       Serial.println(F("ERR INVALID_SQUARE"));
+      Magnet::forceOff();
       return false;
     }
 
@@ -798,6 +876,7 @@ namespace Calibration {
 
     if (movingPiece == '.') {
       Serial.println(F("ERR NO_PIECE_TO_PROMOTE"));
+      Magnet::forceOff();
       return false;
     }
 
@@ -805,12 +884,10 @@ namespace Calibration {
 
     if (!success) {
       Serial.println(F("ERR PROMOTION_MOVE_FAILED"));
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
-    // Python/UCI usually sends promotion as lowercase, like q.
-    // Convert to uppercase for white pieces and lowercase for black pieces.
     if (movingPiece >= 'A' && movingPiece <= 'Z') {
       if (promotedPiece >= 'a' && promotedPiece <= 'z') {
         promotedPiece = promotedPiece - 32;
@@ -823,6 +900,8 @@ namespace Calibration {
     }
 
     BoardState::setPiece(toFile, toRank, promotedPiece);
+
+    Magnet::forceOff();
 
     Serial.print(F("OK PROMOTION "));
     Serial.print(toFile);
@@ -841,13 +920,17 @@ namespace Calibration {
                  char capturedColor) {
     if (!boardCalibrated) {
       Serial.println(F("ERR NOT_CALIBRATED"));
+      Magnet::forceOff();
       return false;
     }
+
+    makeSureMagnetIsOff(F("enPassant"));
 
     if (!isValidSquare(fromFile, fromRank) ||
         !isValidSquare(toFile, toRank) ||
         !isValidSquare(capturedFile, capturedRank)) {
       Serial.println(F("ERR INVALID_SQUARE"));
+      Magnet::forceOff();
       return false;
     }
 
@@ -857,7 +940,7 @@ namespace Calibration {
 
     if (!success) {
       Serial.println(F("ERR EN_PASSANT_CAPTURE_FAILED"));
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
@@ -867,10 +950,11 @@ namespace Calibration {
 
     if (!success) {
       Serial.println(F("ERR EN_PASSANT_MOVE_FAILED"));
-      Magnet::off();
+      Magnet::forceOff();
       return false;
     }
 
+    Magnet::forceOff();
     Serial.println(F("OK EN_PASSANT"));
     return true;
   }
@@ -925,7 +1009,7 @@ static void saveCalibration() {
   stored.magic = CALIBRATION_MAGIC;
   stored.version = CALIBRATION_VERSION;
 
-  // Keep EEPROM order the same:
+  // EEPROM storage order stays:
   // a1, h1, a8, h8
   PointF corners[] = {cornerA1, cornerH1, cornerA8, cornerH8};
 
@@ -998,6 +1082,16 @@ static bool squareToPosition(char file, char rank, long &x, long &y) {
   return gridToPosition(fileIndex, rankIndex, x, y);
 }
 
+static void makeSureMagnetIsOff(const __FlashStringHelper *reason) {
+  if (Magnet::isOn()) {
+    Serial.print(F("Warning: magnet was still on before "));
+    Serial.println(reason);
+  }
+
+  Magnet::forceOff();
+  delay(100);
+}
+
 static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord,
                                 float targetFileCoord, float targetRankCoord) {
   float dFile = targetFileCoord - approachFileCoord;
@@ -1031,7 +1125,7 @@ static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord
   Serial.println(releaseY);
 
   if (!Motion::moveTo(releaseX, releaseY)) {
-    Magnet::off();
+    Magnet::forceOff();
     return false;
   }
 
@@ -1050,7 +1144,6 @@ static bool shouldUseDiagonalPiecePath(char movingPiece,
     return false;
   }
 
-  // Must actually be diagonal.
   if (dFile == 0 || dRank == 0) {
     return false;
   }
@@ -1059,7 +1152,6 @@ static bool shouldUseDiagonalPiecePath(char movingPiece,
     return false;
   }
 
-  // Make sure the diagonal path is clear before dragging through square centers.
   if (!isDiagonalPathClear(fromFileIndex, fromRankIndex,
                            toFileIndex, toRankIndex)) {
     Serial.println(F("Diagonal path blocked. Falling back to border-lane path."));
@@ -1108,8 +1200,11 @@ static bool movePieceToGridPosition(char fromFile, char fromRank,
                                     float targetFileCoord, float targetRankCoord) {
   if (!boardCalibrated) {
     Serial.println(F("ERR NOT_CALIBRATED"));
+    Magnet::forceOff();
     return false;
   }
+
+  makeSureMagnetIsOff(F("movePieceToGridPosition"));
 
   long fromX;
   long fromY;
@@ -1118,11 +1213,13 @@ static bool movePieceToGridPosition(char fromFile, char fromRank,
 
   if (!squareToPosition(fromFile, fromRank, fromX, fromY)) {
     Serial.println(F("ERR INVALID_FROM_SQUARE"));
+    Magnet::forceOff();
     return false;
   }
 
   if (!gridToPosition(targetFileCoord, targetRankCoord, targetX, targetY)) {
     Serial.println(F("ERR INVALID_TARGET_GRID"));
+    Magnet::forceOff();
     return false;
   }
 
@@ -1135,7 +1232,7 @@ static bool movePieceToGridPosition(char fromFile, char fromRank,
   Serial.println(targetRankCoord);
 
   if (!Motion::moveTo(fromX, fromY)) {
-    Magnet::off();
+    Magnet::forceOff();
     return false;
   }
 
@@ -1145,17 +1242,17 @@ static bool movePieceToGridPosition(char fromFile, char fromRank,
   delay(MAGNET_PICKUP_DELAY_MS);
 
   if (!Motion::moveTo(targetX, targetY)) {
-    Magnet::off();
+    Magnet::forceOff();
     return false;
   }
 
   if (!moveToReleaseOffset(fileToIndex(fromFile), rankToIndex(fromRank),
                            targetFileCoord, targetRankCoord)) {
-    Magnet::off();
+    Magnet::forceOff();
     return false;
   }
 
-  Magnet::off();
+  Magnet::forceOff();
   delay(MAGNET_DROP_DELAY_MS);
 
   return true;
@@ -1168,6 +1265,7 @@ static bool moveCapturedPieceToParking(char capturedFile, char capturedRank,
 
   if (!getParkingGridPosition(capturedColor, parkingFileCoord, parkingRankCoord)) {
     Serial.println(F("ERR NO_CAPTURE_PARKING_SPACE"));
+    Magnet::forceOff();
     return false;
   }
 
@@ -1175,6 +1273,7 @@ static bool moveCapturedPieceToParking(char capturedFile, char capturedRank,
                                          parkingFileCoord, parkingRankCoord);
 
   if (!success) {
+    Magnet::forceOff();
     return false;
   }
 
@@ -1185,6 +1284,7 @@ static bool moveCapturedPieceToParking(char capturedFile, char capturedRank,
     blackCapturedCount++;
   }
 
+  Magnet::forceOff();
   return true;
 }
 

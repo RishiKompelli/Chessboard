@@ -1,10 +1,11 @@
 #include "Magnet.h"
+#include <Arduino.h>
 
-// MOSFET switch input pin
 const int MAGNET_PIN = 9;
 
-// Most MOSFET modules turn ON when the input pin is HIGH.
-const bool MAGNET_ACTIVE_HIGH = true;
+// Change these only if your MOSFET module is active-low.
+const int MAGNET_ON_LEVEL = HIGH;
+const int MAGNET_OFF_LEVEL = LOW;
 
 bool magnetState = false;
 
@@ -12,39 +13,30 @@ namespace Magnet {
 
   void begin() {
     pinMode(MAGNET_PIN, OUTPUT);
-    off(); // always start with magnet off
+    forceOff();
   }
 
   void on() {
+    digitalWrite(MAGNET_PIN, MAGNET_ON_LEVEL);
     magnetState = true;
-
-    if (MAGNET_ACTIVE_HIGH) {
-      digitalWrite(MAGNET_PIN, HIGH);
-    } else {
-      digitalWrite(MAGNET_PIN, LOW);
-    }
-
-    Serial.println(F("Electromagnet ON"));
+    Serial.println(F("MAGNET ON"));
   }
 
   void off() {
+    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
     magnetState = false;
-
-    if (MAGNET_ACTIVE_HIGH) {
-      digitalWrite(MAGNET_PIN, LOW);
-    } else {
-      digitalWrite(MAGNET_PIN, HIGH);
-    }
-
-    Serial.println(F("Electromagnet OFF"));
+    Serial.println(F("MAGNET OFF"));
   }
 
-  void toggle() {
-    if (magnetState) {
-      off();
-    } else {
-      on();
-    }
+  void forceOff() {
+    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
+    delay(20);
+    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
+    delay(20);
+    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
+
+    magnetState = false;
+    Serial.println(F("MAGNET FORCE OFF"));
   }
 
   bool isOn() {

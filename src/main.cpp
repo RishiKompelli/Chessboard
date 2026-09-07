@@ -1,238 +1,294 @@
 #include <Arduino.h>
+#include <ctype.h>
+
 #include "Motion.h"
 #include "Calibration.h"
 #include "Magnet.h"
 #include "BoardState.h"
 
-void printHelp();
-void processSingleCommand(char cmd);
-void processBufferedInput(char cmd);
-bool isValidBufferedChar(char cmd, int index);
-void runBufferedCommand();
-void startInputMode(char mode, int targetLength);
+// ---------------- SERIAL INPUT MODES ----------------
+//
+// Single-char commands:
+//   !       = abort/reset current input mode
+//   w/a/s/d = start jogging
+//   x       = stop jogging and force magnet off
+//   f/o     = force magnet off
+//   v       = toggle magnet
+//   q       = set current position as a1 without clearing saved calibration
+//   z       = zero position AND clear saved calibration
+//   c       = start 4-corner calibration
+//   k       = save current calibration point
+//   p       = print current position
+//   g       = print grid
+//   t       = test all squares
+//   u       = status
+//   b       = print board state
+//   i       = reset board state
+//   h       = help
+//
+// Buffered move commands:
+//   r + e2e4       normal/safe move
+//   y + e4d5b      capture, captured piece is black
+//   l + wk         white kingside castle
+//   l + wq         white queenside castle
+//   l + bk         black kingside castle
+//   l + bq         black queenside castle
+//   n + e7e8q      promotion
+//   e + e5d6d5b    en passant
 
 char inputMode = 0;
-char inputBuffer[8];
+char inputBuffer[10];
 int inputIndex = 0;
 int inputTargetLength = 0;
 
-// Input modes:
-// r = regular move, 4 chars: e2e4
-// y = capture, 5 chars: e4d5b
-// l = castle, 2 chars: wk
-// n = promotion, 5 chars: e7e8q
-// e = en passant, 7 chars: e5d6d5b
+// Continuous jog state
+int jogDirX = 0;
+int jogDirY = 0;
+
+long jogStepAmount = 20;
+const long MIN_JOG_STEP_AMOUNT = 2;
+const long MAX_JOG_STEP_AMOUNT = 300;
+
+unsigned long lastJogTime = 0;
+const unsigned long JOG_INTERVAL_MS = 5;
+
+// ---------------- FUNCTION DECLARATIONS ----------------
+
+void printHelp();
+
+void handleSerialChar(char ch);
+void startBufferedCommand(char mode, int targetLength);
+void clearBufferedCommand();
+void addBufferedChar(char ch);
+void executeBufferedCommand();
+
+void startJog(int dx, int dy);
+void stopJog(bool forceMagnetOff = true);
+void updateJog();
+
+void forceMagnetOffCommand();
+void toggleMagnetCommand();
+
+// ---------------- SETUP / LOOP ----------------
 
 void setup() {
   Serial.begin(9600);
-  delay(2000);
+  delay(500);
 
   Serial.println();
-  Serial.println(F("=== CHESSBOARD CODE STARTED VERSION TEST 1 ==="));
+  Serial.println(F("Automatic Chessboard Starting..."));
 
   Motion::begin();
-  Serial.println(F("Motion started"));
-
   Magnet::begin();
-  Serial.println(F("Magnet started"));
 
   BoardState::reset();
-  Serial.println(F("Board state reset"));
+  Magnet::forceOff();
 
+  Serial.println(F("Loading saved calibration..."));
   Calibration::loadCalibration();
-  Serial.println(F("Calibration load attempted"));
 
-  Serial.println(F("CoreXY Chessboard Controller Ready"));
+  Serial.println();
+  Serial.println(F("Ready."));
   printHelp();
 }
 
 void loop() {
   while (Serial.available() > 0) {
-    char cmd = Serial.read();
-
-    if (cmd == '\n' || cmd == '\r' || cmd == ' ') {
-      continue;
-    }
-
-    cmd = tolower(cmd);
-
-    if (inputMode != 0) {
-      processBufferedInput(cmd);
-    } else {
-      processSingleCommand(cmd);
-    }
+    char ch = Serial.read();
+    handleSerialChar(ch);
   }
 
-  Motion::update();
+  updateJog();
 }
 
-void processSingleCommand(char cmd) {
-  if (cmd == 'w') {
-    Motion::setJog(0, 1);
-    Serial.println(F("Moving up"));
+// ---------------- SERIAL COMMAND HANDLING ----------------
+
+void handleSerialChar(char ch) {
+  if (ch == '\r' || ch == '\n' || ch == ' ') {
+    return;
   }
-  else if (cmd == 's') {
-    Motion::setJog(0, -1);
-    Serial.println(F("Moving down"));
+
+  ch = tolower(ch);
+
+  // IMPORTANT:
+  // This must happen before the inputMode check.
+  // It lets Python escape from a half-finished move command.
+  if (ch == '!') {
+    clearBufferedCommand();
+    stopJog(true);
+    Magnet::forceOff();
+    Serial.println(F("OK ABORT_INPUT"));
+    return;
   }
-  else if (cmd == 'a') {
-    Motion::setJog(-1, 0);
-    Serial.println(F("Moving left"));
+
+  if (inputMode != 0) {
+    addBufferedChar(ch);
+    return;
   }
-  else if (cmd == 'd') {
-    Motion::setJog(1, 0);
-    Serial.println(F("Moving right"));
+
+  if (ch == 'w') {
+    startJog(0, 1);
   }
-  else if (cmd == 'x') {
-    Motion::stop();
-    Magnet::off();
-    inputMode = 0;
-    inputIndex = 0;
-    inputTargetLength = 0;
-    Serial.println(F("Stopped / aborted"));
+  else if (ch == 's') {
+    startJog(0, -1);
   }
-  else if (cmd == '+') {
-    Motion::speedUp();
+  else if (ch == 'a') {
+    startJog(-1, 0);
   }
-  else if (cmd == '-') {
-    Motion::slowDown();
+  else if (ch == 'd') {
+    startJog(1, 0);
   }
-  else if (cmd == 'z') {
-    Calibration::zeroPosition();
+  else if (ch == 'x') {
+    stopJog(true);
   }
-  else if (cmd == 'q') {
+  else if (ch == '+') {
+    jogStepAmount += 5;
+    if (jogStepAmount > MAX_JOG_STEP_AMOUNT) {
+      jogStepAmount = MAX_JOG_STEP_AMOUNT;
+    }
+
+    Serial.print(F("Jog step amount: "));
+    Serial.println(jogStepAmount);
+  }
+  else if (ch == '-') {
+    jogStepAmount -= 5;
+    if (jogStepAmount < MIN_JOG_STEP_AMOUNT) {
+      jogStepAmount = MIN_JOG_STEP_AMOUNT;
+    }
+
+    Serial.print(F("Jog step amount: "));
+    Serial.println(jogStepAmount);
+  }
+  else if (ch == 'f' || ch == 'o') {
+    forceMagnetOffCommand();
+  }
+  else if (ch == 'v') {
+    toggleMagnetCommand();
+  }
+  else if (ch == 'q') {
+    stopJog(true);
     Calibration::setCurrentPositionAsA1();
   }
-  else if (cmd == 'p') {
-    Calibration::printPosition();
+  else if (ch == 'z') {
+    stopJog(true);
+    Calibration::zeroPosition();
   }
-  else if (cmd == 'm') {
-    Calibration::setBoardMax();
+  else if (ch == 'c') {
+    stopJog(true);
+    Calibration::startFourCornerCalibration();
   }
-  else if (cmd == 'c') {
-  Calibration::startFourCornerCalibration();
-  }
-  else if (cmd == 'k') {
+  else if (ch == 'k') {
+    stopJog(true);
     Calibration::recordCalibrationPoint();
+    Serial.println(F("OK CALIBRATION_POINT"));
   }
-  else if (cmd == 'g') {
+  else if (ch == 'p') {
+    Calibration::printPosition();
+    Serial.println(F("OK POSITION"));
+  }
+  else if (ch == 'g') {
+    stopJog(true);
     Calibration::printGrid();
+    Serial.println(F("OK GRID"));
   }
-  else if (cmd == 't') {
+  else if (ch == 't') {
+    stopJog(true);
     Calibration::testAllSquares();
+    Magnet::forceOff();
+    Serial.println(F("OK TEST_ALL_SQUARES"));
   }
-  else if (cmd == 'o') {
-    Magnet::on();
-  }
-  else if (cmd == 'f') {
-    Magnet::off();
-  }
-  else if (cmd == 'v') {
-    Magnet::toggle();
-  }
-  else if (cmd == '1') {
-    Motion::rawMotorTest('A', 1);
-  }
-  else if (cmd == '2') {
-    Motion::rawMotorTest('A', -1);
-  }
-  else if (cmd == '3') {
-    Motion::rawMotorTest('B', 1);
-  }
-  else if (cmd == '4') {
-    Motion::rawMotorTest('B', -1);
-  }
-  else if (cmd == 'r') {
-    startInputMode('r', 4);
-  }
-  else if (cmd == 'y') {
-  startInputMode('y', 5);
-  }
-  else if (cmd == 'l') {
-    startInputMode('l', 2);
-  }
-  else if (cmd == 'n') {
-    startInputMode('n', 5);
-  }
-  else if (cmd == 'e') {
-    startInputMode('e', 7);
-  }
-  else if (cmd == 'u') {
+  else if (ch == 'u') {
     Calibration::printStatus();
+  }
+  else if (ch == 'b') {
     BoardState::print();
+    Serial.println(F("OK BOARD_PRINT"));
   }
-  else if (cmd == 'h') {
-    printHelp();
-  }
-  else if (cmd == 'b') {
-  BoardState::print();
-  }
-  else if (cmd == 'i') {
+  else if (ch == 'i') {
+    stopJog(true);
     BoardState::reset();
     Calibration::resetCaptureParking();
     BoardState::print();
+    Magnet::forceOff();
+    Serial.println(F("OK BOARD_RESET"));
+  }
+  else if (ch == 'h') {
+    printHelp();
+  }
+
+  // Buffered move commands
+  else if (ch == 'r') {
+    stopJog(true);
+    startBufferedCommand('r', 4);
+  }
+  else if (ch == 'y') {
+    stopJog(true);
+    startBufferedCommand('y', 5);
+  }
+  else if (ch == 'l') {
+    stopJog(true);
+    startBufferedCommand('l', 2);
+  }
+  else if (ch == 'n') {
+    stopJog(true);
+    startBufferedCommand('n', 5);
+  }
+  else if (ch == 'e') {
+    stopJog(true);
+    startBufferedCommand('e', 7);
   }
   else {
     Serial.print(F("Unknown command: "));
-    Serial.println(cmd);
+    Serial.println(ch);
+    Serial.println(F("Press h for help."));
   }
 }
 
-void startInputMode(char mode, int targetLength) {
+void startBufferedCommand(char mode, int targetLength) {
   inputMode = mode;
   inputIndex = 0;
   inputTargetLength = targetLength;
 
-  Motion::stop();
-
-  Serial.println();
+  for (int i = 0; i < 10; i++) {
+    inputBuffer[i] = '\0';
+  }
 
   if (mode == 'r') {
-    Serial.println(F("Regular move mode started."));
-    Serial.println(F("Enter move as 4 chars, like d2d3."));
+    Serial.println(F("Move mode. Send move like e2e4."));
   }
   else if (mode == 'y') {
-    Serial.println(F("Capture mode started."));
-    Serial.println(F("Enter capture as 5 chars, like e4d5b."));
-    Serial.println(F("Last char is captured color: w or b."));
+    Serial.println(F("Capture mode. Send like e4d5b. Last char is captured color w/b."));
   }
   else if (mode == 'l') {
-    Serial.println(F("Castle mode started."));
-    Serial.println(F("Enter castle as 2 chars: wk, wq, bk, or bq."));
+    Serial.println(F("Castle mode. Send wk, wq, bk, or bq."));
   }
   else if (mode == 'n') {
-    Serial.println(F("Promotion mode started."));
-    Serial.println(F("Enter promotion as 5 chars, like e7e8q."));
-    Serial.println(F("Promotion piece can be q, r, b, or n."));
+    Serial.println(F("Promotion mode. Send like e7e8q."));
   }
   else if (mode == 'e') {
-    Serial.println(F("En passant mode started."));
-    Serial.println(F("Enter en passant as 7 chars, like e5d6d5b."));
-    Serial.println(F("Format: from, to, captured square, captured color."));
+    Serial.println(F("En passant mode. Send like e5d6d5b."));
   }
-
-  Serial.println(F("Send x to cancel."));
 }
 
-void processBufferedInput(char cmd) {
-  if (cmd == 'x') {
-    inputMode = 0;
-    inputIndex = 0;
-    inputTargetLength = 0;
-    Magnet::off();
-    Serial.println(F("Input cancelled."));
+void clearBufferedCommand() {
+  inputMode = 0;
+  inputIndex = 0;
+  inputTargetLength = 0;
+
+  for (int i = 0; i < 10; i++) {
+    inputBuffer[i] = '\0';
+  }
+}
+
+void addBufferedChar(char ch) {
+  if (inputIndex >= 9) {
+    Serial.println(F("ERR INPUT_BUFFER_OVERFLOW"));
+    clearBufferedCommand();
+    Magnet::forceOff();
     return;
   }
 
-  if (!isValidBufferedChar(cmd, inputIndex)) {
-    Serial.print(F("Invalid character: "));
-    Serial.println(cmd);
-    Serial.println(F("Restarting this input mode."));
-    inputIndex = 0;
-    return;
-  }
-
-  inputBuffer[inputIndex] = cmd;
+  inputBuffer[inputIndex] = ch;
   inputIndex++;
 
   Serial.print(F("Input so far: "));
@@ -241,63 +297,29 @@ void processBufferedInput(char cmd) {
   }
   Serial.println();
 
-  if (inputIndex == inputTargetLength) {
-    inputBuffer[inputIndex] = '\0';
-    runBufferedCommand();
-
-    inputMode = 0;
-    inputIndex = 0;
-    inputTargetLength = 0;
+  if (inputIndex >= inputTargetLength) {
+    executeBufferedCommand();
+    clearBufferedCommand();
   }
 }
 
-bool isValidBufferedChar(char cmd, int index) {
-  if (inputMode == 'r') {
-    // e2e4
-    if (index == 0 || index == 2) return cmd >= 'a' && cmd <= 'h';
-    if (index == 1 || index == 3) return cmd >= '1' && cmd <= '8';
-  }
+void executeBufferedCommand() {
+  Magnet::forceOff();
+  delay(100);
 
-  else if (inputMode == 'y') {
-    // e4d5b
-    if (index == 0 || index == 2) return cmd >= 'a' && cmd <= 'h';
-    if (index == 1 || index == 3) return cmd >= '1' && cmd <= '8';
-    if (index == 4) return cmd == 'w' || cmd == 'b';
-  }
-
-  else if (inputMode == 'l') {
-    // wk, wq, bk, bq
-    if (index == 0) return cmd == 'w' || cmd == 'b';
-    if (index == 1) return cmd == 'k' || cmd == 'q';
-  }
-
-  else if (inputMode == 'n') {
-    // e7e8q
-    if (index == 0 || index == 2) return cmd >= 'a' && cmd <= 'h';
-    if (index == 1 || index == 3) return cmd >= '1' && cmd <= '8';
-    if (index == 4) return cmd == 'q' || cmd == 'r' || cmd == 'b' || cmd == 'n';
-  }
-
-  else if (inputMode == 'e') {
-    // e5d6d5b
-    if (index == 0 || index == 2 || index == 4) return cmd >= 'a' && cmd <= 'h';
-    if (index == 1 || index == 3 || index == 5) return cmd >= '1' && cmd <= '8';
-    if (index == 6) return cmd == 'w' || cmd == 'b';
-  }
-
-  return false;
-}
-
-void runBufferedCommand() {
   bool success = false;
 
   if (inputMode == 'r') {
-    success = Calibration::movePieceSafe(
-      inputBuffer[0],
-      inputBuffer[1],
-      inputBuffer[2],
-      inputBuffer[3]
-    );
+    char fromFile = inputBuffer[0];
+    char fromRank = inputBuffer[1];
+    char toFile = inputBuffer[2];
+    char toRank = inputBuffer[3];
+
+    Serial.println(F("MOVE_COMMAND_STARTED"));
+
+    success = Calibration::movePieceSafe(fromFile, fromRank, toFile, toRank);
+
+    Magnet::forceOff();
 
     if (success) {
       Serial.println(F("OK MOVE_COMMAND"));
@@ -308,13 +330,17 @@ void runBufferedCommand() {
   }
 
   else if (inputMode == 'y') {
-    success = Calibration::capturePiece(
-      inputBuffer[0],
-      inputBuffer[1],
-      inputBuffer[2],
-      inputBuffer[3],
-      inputBuffer[4]
-    );
+    char fromFile = inputBuffer[0];
+    char fromRank = inputBuffer[1];
+    char toFile = inputBuffer[2];
+    char toRank = inputBuffer[3];
+    char capturedColor = inputBuffer[4];
+
+    Serial.println(F("CAPTURE_COMMAND_STARTED"));
+
+    success = Calibration::capturePiece(fromFile, fromRank, toFile, toRank, capturedColor);
+
+    Magnet::forceOff();
 
     if (success) {
       Serial.println(F("OK CAPTURE_COMMAND"));
@@ -328,12 +354,20 @@ void runBufferedCommand() {
     char color = inputBuffer[0];
     char side = inputBuffer[1];
 
+    Serial.println(F("CASTLE_COMMAND_STARTED"));
+
     if (side == 'k') {
       success = Calibration::castleKingside(color);
     }
     else if (side == 'q') {
       success = Calibration::castleQueenside(color);
     }
+    else {
+      Serial.println(F("ERR INVALID_CASTLE_SIDE"));
+      success = false;
+    }
+
+    Magnet::forceOff();
 
     if (success) {
       Serial.println(F("OK CASTLE_COMMAND"));
@@ -344,13 +378,17 @@ void runBufferedCommand() {
   }
 
   else if (inputMode == 'n') {
-    success = Calibration::promotePiece(
-      inputBuffer[0],
-      inputBuffer[1],
-      inputBuffer[2],
-      inputBuffer[3],
-      inputBuffer[4]
-    );
+    char fromFile = inputBuffer[0];
+    char fromRank = inputBuffer[1];
+    char toFile = inputBuffer[2];
+    char toRank = inputBuffer[3];
+    char promotedPiece = inputBuffer[4];
+
+    Serial.println(F("PROMOTION_COMMAND_STARTED"));
+
+    success = Calibration::promotePiece(fromFile, fromRank, toFile, toRank, promotedPiece);
+
+    Magnet::forceOff();
 
     if (success) {
       Serial.println(F("OK PROMOTION_COMMAND"));
@@ -361,15 +399,22 @@ void runBufferedCommand() {
   }
 
   else if (inputMode == 'e') {
-    success = Calibration::enPassant(
-      inputBuffer[0],
-      inputBuffer[1],
-      inputBuffer[2],
-      inputBuffer[3],
-      inputBuffer[4],
-      inputBuffer[5],
-      inputBuffer[6]
-    );
+    char fromFile = inputBuffer[0];
+    char fromRank = inputBuffer[1];
+    char toFile = inputBuffer[2];
+    char toRank = inputBuffer[3];
+    char capturedFile = inputBuffer[4];
+    char capturedRank = inputBuffer[5];
+    char capturedColor = inputBuffer[6];
+
+    Serial.println(F("EN_PASSANT_COMMAND_STARTED"));
+
+    success = Calibration::enPassant(fromFile, fromRank,
+                                     toFile, toRank,
+                                     capturedFile, capturedRank,
+                                     capturedColor);
+
+    Magnet::forceOff();
 
     if (success) {
       Serial.println(F("OK EN_PASSANT_COMMAND"));
@@ -378,36 +423,127 @@ void runBufferedCommand() {
       Serial.println(F("ERR EN_PASSANT_COMMAND_FAILED"));
     }
   }
+
+  else {
+    Magnet::forceOff();
+    Serial.println(F("ERR UNKNOWN_INPUT_MODE"));
+  }
 }
+
+// ---------------- JOGGING ----------------
+
+void startJog(int dx, int dy) {
+  jogDirX = dx;
+  jogDirY = dy;
+  lastJogTime = 0;
+
+  Serial.print(F("Jogging "));
+  if (dx == 1) Serial.println(F("right"));
+  else if (dx == -1) Serial.println(F("left"));
+  else if (dy == 1) Serial.println(F("up"));
+  else if (dy == -1) Serial.println(F("down"));
+}
+
+void stopJog(bool forceMagnetOff) {
+  jogDirX = 0;
+  jogDirY = 0;
+
+  if (forceMagnetOff) {
+    Magnet::forceOff();
+  }
+
+  Serial.println(F("Jog stopped."));
+  Calibration::printPosition();
+}
+
+void updateJog() {
+  if (jogDirX == 0 && jogDirY == 0) {
+    return;
+  }
+
+  unsigned long now = millis();
+
+  if (now - lastJogTime < JOG_INTERVAL_MS) {
+    return;
+  }
+
+  lastJogTime = now;
+
+  long currentX = Motion::getX();
+  long currentY = Motion::getY();
+
+  long targetX = currentX + jogDirX * jogStepAmount;
+  long targetY = currentY + jogDirY * jogStepAmount;
+
+  Motion::moveTo(targetX, targetY);
+}
+
+// ---------------- MAGNET COMMANDS ----------------
+
+void forceMagnetOffCommand() {
+  Magnet::forceOff();
+  Serial.println(F("OK MAGNET_OFF"));
+}
+
+void toggleMagnetCommand() {
+  if (Magnet::isOn()) {
+    Magnet::forceOff();
+    Serial.println(F("OK MAGNET_OFF"));
+  }
+  else {
+    Magnet::on();
+    Serial.println(F("OK MAGNET_ON"));
+  }
+}
+
+// ---------------- HELP ----------------
 
 void printHelp() {
   Serial.println();
-  Serial.println(F("Commands:"));
-  Serial.println(F("w/a/s/d = manual move"));
-  Serial.println(F("x = stop / abort / cancel input"));
-  Serial.println(F("+ = faster"));
-  Serial.println(F("- = slower"));
-  Serial.println(F("z = zero position AND clear saved EEPROM calibration"));
-  Serial.println(F("q = set current position as a1 without clearing EEPROM"));
-  Serial.println(F("p = print position"));
-  Serial.println(F("u = print full status"));
-  Serial.println(F("m = old quick calibration using current position as h8"));
-  Serial.println(F("c = start 4-corner calibration"));
-  Serial.println(F("k = save current calibration corner"));
-  Serial.println(F("g = print grid"));
-  Serial.println(F("t = test all 64 squares"));
-  Serial.println(F("o = electromagnet on"));
-  Serial.println(F("f = electromagnet off"));
-  Serial.println(F("v = toggle electromagnet"));
-  Serial.println(F("r = regular move mode, then type d2d3"));
-  Serial.println(F("y = capture mode, then type e4d5b"));
-  Serial.println(F("l = castle mode, then type wk/wq/bk/bq"));
-  Serial.println(F("n = promotion mode, then type e7e8q"));
-  Serial.println(F("e = en passant mode, then type e5d6d5b"));
-  Serial.println(F("1/2 = test Motor A"));
-  Serial.println(F("3/4 = test Motor B"));
-  Serial.println(F("b = print board state"));
-  Serial.println(F("i = reset board state and capture parking"));
-  Serial.println(F("h = help"));
+  Serial.println(F("===== AUTOMATIC CHESSBOARD HELP ====="));
+  Serial.println(F("Emergency:"));
+  Serial.println(F("  ! = abort current input mode and force magnet off"));
+  Serial.println();
+  Serial.println(F("Manual movement:"));
+  Serial.println(F("  w = jog up"));
+  Serial.println(F("  s = jog down"));
+  Serial.println(F("  a = jog left"));
+  Serial.println(F("  d = jog right"));
+  Serial.println(F("  x = stop jog and force magnet off"));
+  Serial.println(F("  + = larger jog step"));
+  Serial.println(F("  - = smaller jog step"));
+  Serial.println();
+  Serial.println(F("Magnet:"));
+  Serial.println(F("  v = toggle magnet"));
+  Serial.println(F("  f = force magnet off"));
+  Serial.println(F("  o = force magnet off"));
+  Serial.println();
+  Serial.println(F("Calibration:"));
+  Serial.println(F("  q = set current position as a1 without clearing EEPROM"));
+  Serial.println(F("  z = zero position and clear saved calibration"));
+  Serial.println(F("  c = start 4-corner calibration"));
+  Serial.println(F("  k = save current calibration point"));
+  Serial.println(F("  p = print position"));
+  Serial.println(F("  g = print grid"));
+  Serial.println(F("  t = test all squares"));
+  Serial.println(F("  u = status"));
+  Serial.println();
+  Serial.println(F("Board state:"));
+  Serial.println(F("  i = reset board state"));
+  Serial.println(F("  b = print board state"));
+  Serial.println();
+  Serial.println(F("Moves:"));
+  Serial.println(F("  r e2e4    = normal/safe move"));
+  Serial.println(F("  y e4d5b   = capture, captured piece is black"));
+  Serial.println(F("  l wk      = white kingside castle"));
+  Serial.println(F("  l wq      = white queenside castle"));
+  Serial.println(F("  l bk      = black kingside castle"));
+  Serial.println(F("  l bq      = black queenside castle"));
+  Serial.println(F("  n e7e8q   = promotion"));
+  Serial.println(F("  e e5d6d5b = en passant"));
+  Serial.println();
+  Serial.println(F("Other:"));
+  Serial.println(F("  h = help"));
+  Serial.println(F("====================================="));
   Serial.println();
 }
