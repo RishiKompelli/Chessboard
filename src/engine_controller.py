@@ -14,7 +14,8 @@ STOCKFISH_PATH = r"C:\Users\rishi_7b7n0gh\Downloads\stockfish-windows-x86-64-avx
 
 ENGINE_THINK_TIME_SECONDS = 0.5
 
-# Keep this as manual_remove unless your captured-piece parking area works.
+# Captures are manual again.
+# Python will ask you to remove the captured piece by hand.
 CAPTURE_STYLE = "manual_remove"
 # CAPTURE_STYLE = "parking"
 
@@ -25,9 +26,7 @@ def open_arduino():
     print(f"Opening Arduino on {SERIAL_PORT}...")
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
 
-    # Arduino Nano usually resets when serial opens
     time.sleep(2.5)
-
     read_available_lines(ser, 1.0)
 
     print()
@@ -58,11 +57,6 @@ def send_raw_char(ser, ch):
 
 
 def abort_arduino_input(ser):
-    """
-    Clears any stuck Arduino input mode before sending a real command.
-    Requires main.cpp to support the ! command.
-    """
-
     ser.reset_input_buffer()
 
     ser.write(b"!\n")
@@ -85,13 +79,10 @@ def send_arduino_command(ser, command, expected_ok=None, timeout=600):
     print()
     print(f"> Arduino command: {command}")
 
-    # Very important:
-    # This prevents Arduino from staying stuck in r/y/l/n/e input mode.
     abort_arduino_input(ser)
 
     ser.reset_input_buffer()
 
-    # Send slowly because Arduino reads char-by-char
     for ch in command:
         ser.write(ch.encode())
         ser.flush()
@@ -130,9 +121,7 @@ def send_arduino_command(ser, command, expected_ok=None, timeout=600):
 
     print()
     print("Timed out waiting for Arduino.")
-    print("This usually means the Arduino did not send the expected OK message.")
     print(f"Expected: {expected_ok}")
-    print("The move may still be physically running, or main.cpp may not be printing the matching OK.")
     return False
 
 
@@ -146,13 +135,13 @@ def jog_mode(ser):
     print("Controls:")
     print("  w / up arrow     = move up")
     print("  s / down arrow   = move down")
-    print("  a / left arrow   = move left")
-    print("  d / right arrow  = move right")
+    print("  a / left arrow   = move left/right")
+    print("  d / right arrow  = move left/right")
     print("  space or x       = stop")
     print("  f                = force magnet off")
     print("  v                = toggle magnet")
-    print("  +                = faster")
-    print("  -                = slower")
+    print("  +                = bigger jog step")
+    print("  -                = smaller jog step")
     print("  p                = print position")
     print("  q                = set current position as a1")
     print("  c                = start 4-corner calibration")
@@ -176,7 +165,6 @@ def jog_mode(ser):
         if msvcrt.kbhit():
             key = msvcrt.getwch()
 
-            # Arrow keys come in as two characters on Windows
             if key in ("\x00", "\xe0"):
                 arrow = msvcrt.getwch()
 
@@ -191,7 +179,6 @@ def jog_mode(ser):
                 else:
                     continue
 
-            # Escape exits jog mode
             if key == "\x1b":
                 send_raw_char(ser, "x")
                 time.sleep(0.05)
@@ -200,7 +187,6 @@ def jog_mode(ser):
                 print("Exiting jog mode.")
                 return
 
-            # Space stops motion
             if key == " ":
                 key = "x"
 
@@ -217,7 +203,6 @@ def jog_mode(ser):
             ]
 
             if key in allowed_keys:
-                # Do not spam repeated movement keys
                 if key in ["w", "a", "s", "d"] and key == last_sent:
                     continue
 
@@ -237,8 +222,7 @@ def jog_mode(ser):
                     print("Moving:", key)
                 else:
                     print("Sent:", key)
-                    if key not in ["w", "a", "s", "d"]:
-                        last_sent = None
+                    last_sent = None
 
             else:
                 print("Ignored key:", repr(key))
@@ -249,22 +233,6 @@ def jog_mode(ser):
 # ---------------- ARDUINO COMMAND PARSING ----------------
 
 def normalize_manual_command(text):
-    """
-    Lets you type nicer commands like:
-      r e2e4
-      y e4d5b
-      l wk
-      n e7e8q
-      e e5d6d5b
-
-    Converts them to:
-      re2e4
-      ye4d5b
-      lwk
-      ne7e8q
-      ee5d6d5b
-    """
-
     text = text.strip().lower()
 
     if text == "":
@@ -343,7 +311,6 @@ def build_arduino_command(board, move):
     moving_color = board.turn
     moving_color_letter = color_char(moving_color)
 
-    # Castling
     if board.is_castling(move):
         from_file = chess.square_file(move.from_square)
         to_file = chess.square_file(move.to_square)
@@ -355,7 +322,6 @@ def build_arduino_command(board, move):
             "description": "castling",
         }
 
-    # En passant
     if board.is_en_passant(move):
         captured_square = chess.square(
             chess.square_file(move.to_square),
@@ -365,21 +331,13 @@ def build_arduino_command(board, move):
         captured_square_name = chess.square_name(captured_square)
         captured_color_letter = color_char(not moving_color)
 
-        if CAPTURE_STYLE == "parking":
-            return {
-                "command": "e" + from_square + to_square + captured_square_name + captured_color_letter,
-                "expected_ok": "OK EN_PASSANT_COMMAND",
-                "description": "en passant",
-            }
-
         return {
-            "command": "r" + from_square + to_square,
-            "expected_ok": "OK MOVE_COMMAND",
+            "command": "e" + from_square + to_square + captured_square_name + captured_color_letter,
+            "expected_ok": "OK EN_PASSANT_COMMAND",
             "description": "en passant manual remove",
             "manual_remove_square": captured_square_name,
         }
 
-    # Promotion
     if move.promotion is not None:
         promo = promotion_char(move.promotion)
 
@@ -389,29 +347,12 @@ def build_arduino_command(board, move):
             "description": "promotion",
         }
 
-        # Promotion capture still needs the physical captured piece removed first
-        # unless your Arduino promotion command also handles parking.
         if board.is_capture(move):
             move_info["manual_remove_square"] = to_square
 
         return move_info
 
-    # Normal capture
     if board.is_capture(move):
-        if CAPTURE_STYLE == "parking":
-            captured_piece = board.piece_at(move.to_square)
-
-            if captured_piece is None:
-                captured_color_letter = color_char(not moving_color)
-            else:
-                captured_color_letter = color_char(captured_piece.color)
-
-            return {
-                "command": "y" + from_square + to_square + captured_color_letter,
-                "expected_ok": "OK CAPTURE_COMMAND",
-                "description": "capture",
-            }
-
         return {
             "command": "r" + from_square + to_square,
             "expected_ok": "OK MOVE_COMMAND",
@@ -419,7 +360,6 @@ def build_arduino_command(board, move):
             "manual_remove_square": to_square,
         }
 
-    # Normal move
     return {
         "command": "r" + from_square + to_square,
         "expected_ok": "OK MOVE_COMMAND",
@@ -439,30 +379,11 @@ def execute_move_on_arduino(ser, board, move, label):
     print(f"{label} move type: {move_info['description']}")
     print(f"{label} move command: {move_info['command']}")
 
-    # Safety before every move.
-    # Do not wait for OK here because older Arduino code may only print MAGNET FORCE OFF.
-    send_arduino_command(
-        ser,
-        "f",
-        expected_ok=None,
-        timeout=2
-    )
-
-    time.sleep(0.3)
-
     move_ok = send_arduino_command(
         ser,
         move_info["command"],
         expected_ok=move_info["expected_ok"],
         timeout=600
-    )
-
-    # Safety after every move.
-    send_arduino_command(
-        ser,
-        "f",
-        expected_ok=None,
-        timeout=2
     )
 
     return move_ok
@@ -471,7 +392,6 @@ def execute_move_on_arduino(ser, board, move, label):
 def parse_move(board, text):
     text = text.strip()
 
-    # UCI format: e2e4, g1f3, e7e8q
     try:
         move = chess.Move.from_uci(text.lower())
         if move in board.legal_moves:
@@ -479,7 +399,6 @@ def parse_move(board, text):
     except ValueError:
         pass
 
-    # SAN format: Nf3, O-O, exd5, Qh5+
     try:
         move = board.parse_san(text)
         if move in board.legal_moves:
@@ -505,9 +424,8 @@ def play_game(ser, engine, human_color=chess.WHITE):
 
     print()
     print("Starting full game.")
-    print("Important: do NOT move pieces by hand during the game.")
+    print("Important: do NOT move pieces by hand unless Python tells you to remove a captured piece.")
     print("Type your move, then let the Arduino move your piece.")
-    print("This keeps the Arduino board tracker synced.")
     print()
 
     input("Set all real pieces to the starting position, then press Enter...")
@@ -520,10 +438,6 @@ def play_game(ser, engine, human_color=chess.WHITE):
     print("If Arduino status said Board calibrated: no, stop and recalibrate before playing.")
     input("Press Enter to continue if Board calibrated was yes...")
 
-    # Safety magnet-off command
-    send_arduino_command(ser, "f", expected_ok=None, timeout=2)
-
-    # Reset Arduino board state only. This should NOT clear calibration.
     send_arduino_command(ser, "i", expected_ok=None, timeout=5)
 
     print()
@@ -627,10 +541,10 @@ def print_menu():
     print("  g             print grid")
     print("  c/k           calibration commands")
     print("  r e2e4        Arduino regular move")
-    print("  y e4d5b       Arduino capture mode")
+    print("  y e4d5b       old automatic capture command, now disabled")
     print("  l wk          Arduino castle mode")
     print("  n e7e8q       Arduino promotion mode")
-    print("  e e5d6d5b     Arduino en passant mode")
+    print("  e e5d6d5b     en passant manual remove")
     print("  h             Arduino help")
     print("  menu          show this menu")
     print("  quit          exit")
