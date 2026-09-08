@@ -78,9 +78,6 @@ static void makeSureMagnetIsOff(const __FlashStringHelper *reason);
 static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord,
                                 float targetFileCoord, float targetRankCoord);
 
-static bool isDiagonalPathClear(int fromFileIndex, int fromRankIndex,
-                                int toFileIndex, int toRankIndex);
-
 static bool isValidSquare(char file, char rank);
 static int fileToIndex(char file);
 static int rankToIndex(char rank);
@@ -411,7 +408,7 @@ namespace Calibration {
     Serial.print(F(", Y="));
     Serial.println(targetY);
 
-    bool success = Motion::moveTo(targetX, targetY);
+    bool success = Motion::goTo(targetX, targetY);
 
     printPosition();
 
@@ -526,7 +523,7 @@ namespace Calibration {
     Serial.print(toFile);
     Serial.println(toRank);
 
-    if (!Motion::moveTo(fromX, fromY)) {
+    if (!Motion::goTo(fromX, fromY)) {
       Magnet::forceOff();
       delay(MAGNET_DROP_DELAY_MS);
       return false;
@@ -534,38 +531,6 @@ namespace Calibration {
 
     if (!magnetPickupSequence()) {
       return false;
-    }
-
-    if (dFile != 0 && dRank != 0 && abs(dFile) == abs(dRank)) {
-      Serial.println(F("Using direct diagonal path."));
-
-      if (!isDiagonalPathClear(fromFileIndex, fromRankIndex,
-                               toFileIndex, toRankIndex)) {
-        Serial.println(F("ERR DIAGONAL_PATH_BLOCKED"));
-        Magnet::forceOff();
-        delay(MAGNET_DROP_DELAY_MS);
-        return false;
-      }
-
-      if (!Motion::moveTo(toX, toY)) {
-        Magnet::forceOff();
-        delay(MAGNET_DROP_DELAY_MS);
-        return false;
-      }
-
-      if (!moveToReleaseOffset(fromFileIndex, fromRankIndex,
-                               toFileIndex, toRankIndex)) {
-        Magnet::forceOff();
-        delay(MAGNET_DROP_DELAY_MS);
-        return false;
-      }
-
-      magnetReleaseSequence();
-
-      BoardState::movePiece(fromFile, fromRank, toFile, toRank);
-
-      Serial.println(F("Safe diagonal piece move complete."));
-      return true;
     }
 
     if (abs(dRank) >= abs(dFile)) {
@@ -589,25 +554,25 @@ namespace Calibration {
 
       Serial.println(F("Using vertical lane path."));
 
-      if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
+      if (!Motion::goTo(sourceBorderX, sourceBorderY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(borderCornerX, borderCornerY)) {
+      if (!Motion::goTo(borderCornerX, borderCornerY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
+      if (!Motion::goTo(destinationBorderX, destinationBorderY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(toX, toY)) {
+      if (!Motion::goTo(toX, toY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
@@ -641,25 +606,25 @@ namespace Calibration {
 
       Serial.println(F("Using horizontal lane path."));
 
-      if (!Motion::moveTo(sourceBorderX, sourceBorderY)) {
+      if (!Motion::goTo(sourceBorderX, sourceBorderY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(borderCornerX, borderCornerY)) {
+      if (!Motion::goTo(borderCornerX, borderCornerY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(destinationBorderX, destinationBorderY)) {
+      if (!Motion::goTo(destinationBorderX, destinationBorderY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
       }
 
-      if (!Motion::moveTo(toX, toY)) {
+      if (!Motion::goTo(toX, toY)) {
         Magnet::forceOff();
         delay(MAGNET_DROP_DELAY_MS);
         return false;
@@ -1096,50 +1061,13 @@ static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord
   Serial.print(F(", Y="));
   Serial.println(releaseY);
 
-  if (!Motion::moveTo(releaseX, releaseY)) {
+  if (!Motion::goTo(releaseX, releaseY)) {
     Magnet::forceOff();
     delay(MAGNET_DROP_DELAY_MS);
     return false;
   }
 
   delay(MAGNET_RELEASE_HOLD_MS);
-
-  return true;
-}
-
-static bool isDiagonalPathClear(int fromFileIndex, int fromRankIndex,
-                                int toFileIndex, int toRankIndex) {
-  int dFile = toFileIndex - fromFileIndex;
-  int dRank = toRankIndex - fromRankIndex;
-
-  if (dFile == 0 || dRank == 0) {
-    return false;
-  }
-
-  if (abs(dFile) != abs(dRank)) {
-    return false;
-  }
-
-  int fileStep = dFile > 0 ? 1 : -1;
-  int rankStep = dRank > 0 ? 1 : -1;
-
-  int steps = abs(dFile);
-
-  for (int i = 1; i < steps; i++) {
-    char checkFile = 'a' + fromFileIndex + fileStep * i;
-    char checkRank = '1' + fromRankIndex + rankStep * i;
-
-    char piece = BoardState::getPiece(checkFile, checkRank);
-
-    if (piece != '.') {
-      Serial.print(F("Diagonal blocked by "));
-      Serial.print(piece);
-      Serial.print(F(" at "));
-      Serial.print(checkFile);
-      Serial.println(checkRank);
-      return false;
-    }
-  }
 
   return true;
 }

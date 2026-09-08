@@ -9,7 +9,9 @@ namespace Motion {
   long getX();
   long getY();
 
-  bool moveTo(long targetX, long targetY);
+  bool goTo(long targetX, long targetY);
+
+  void jogStep(int xDir, int yDir);
 }
 
 #endif

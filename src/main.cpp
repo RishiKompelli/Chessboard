@@ -16,14 +16,12 @@ int inputTargetLength = 0;
 // ---------------- JOG SETTINGS ----------------
 
 char jogDirection = 0;
-unsigned long lastJogTime = 0;
 
-// Back to the bigger jog step so it does not feel like tiny little steps.
-long jogStepAmount = 20;
-
-// Lower = more frequent jog updates.
-// This only affects manual jog, not full chess moves.
-const unsigned long JOG_INTERVAL_MS = 8;
+// Same speed style as automatic goTo().
+// Bigger = slower.
+// Smaller = faster.
+const unsigned long JOG_INTERVAL_US = 1600;
+unsigned long lastJogMicros = 0;
 
 // ---------------- FUNCTION DECLARATIONS ----------------
 
@@ -77,6 +75,8 @@ void loop() {
   updateJogMovement();
 }
 
+// ---------------- SERIAL COMMAND HANDLING ----------------
+
 void handleSerialChar(char ch) {
   if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') {
     return;
@@ -84,7 +84,6 @@ void handleSerialChar(char ch) {
 
   ch = tolower(ch);
 
-  // Emergency abort works even if Arduino is stuck waiting for move input.
   if (ch == '!') {
     clearBufferedCommand();
     stopJog(false);
@@ -93,46 +92,21 @@ void handleSerialChar(char ch) {
     return;
   }
 
-  // If currently entering a move command, this character belongs to that command.
   if (inputMode != 0) {
     addBufferedChar(ch);
     return;
   }
 
-  // Manual jog movement
   if (ch == 'w' || ch == 'a' || ch == 's' || ch == 'd') {
     startJog(ch);
     return;
   }
 
-  // Stop movement
   if (ch == 'x') {
     stopJog(true);
     return;
   }
 
-  // Jog step size controls
-  if (ch == '+') {
-    jogStepAmount += 10;
-
-    Serial.print(F("Jog step amount = "));
-    Serial.println(jogStepAmount);
-    return;
-  }
-
-  if (ch == '-') {
-    jogStepAmount -= 10;
-
-    if (jogStepAmount < 5) {
-      jogStepAmount = 5;
-    }
-
-    Serial.print(F("Jog step amount = "));
-    Serial.println(jogStepAmount);
-    return;
-  }
-
-  // Magnet controls
   if (ch == 'f' || ch == 'o') {
     forceMagnetOffCommand();
     return;
@@ -143,7 +117,6 @@ void handleSerialChar(char ch) {
     return;
   }
 
-  // Position / calibration commands
   if (ch == 'q') {
     stopJog(false);
     Calibration::setCurrentPositionAsA1();
@@ -189,7 +162,6 @@ void handleSerialChar(char ch) {
     return;
   }
 
-  // Board state commands
   if (ch == 'b') {
     BoardState::print();
     return;
@@ -208,7 +180,6 @@ void handleSerialChar(char ch) {
     return;
   }
 
-  // Buffered chess commands
   if (ch == 'r') {
     startBufferedCommand('r', 4);
     return;
@@ -318,7 +289,6 @@ void executeBufferedCommand() {
     bool success = Calibration::movePieceSafe(fromFile, fromRank, toFile, toRank);
 
     Magnet::forceOff();
-    delay(300);
 
     if (success) {
       Serial.println(F("OK MOVE_COMMAND"));
@@ -352,7 +322,6 @@ void executeBufferedCommand() {
     );
 
     Magnet::forceOff();
-    delay(300);
 
     if (success) {
       Serial.println(F("OK CAPTURE_COMMAND"));
@@ -386,7 +355,6 @@ void executeBufferedCommand() {
     }
 
     Magnet::forceOff();
-    delay(300);
 
     if (success) {
       Serial.println(F("OK CASTLE_COMMAND"));
@@ -415,12 +383,12 @@ void executeBufferedCommand() {
 
     bool success = Calibration::promotePiece(
       fromFile, fromRank,
-      toFile, toRank,
+      toFile,
+      toRank,
       promotedPiece
     );
 
     Magnet::forceOff();
-    delay(300);
 
     if (success) {
       Serial.println(F("OK PROMOTION_COMMAND"));
@@ -457,7 +425,6 @@ void executeBufferedCommand() {
     );
 
     Magnet::forceOff();
-    delay(300);
 
     if (success) {
       Serial.println(F("OK EN_PASSANT_COMMAND"));
@@ -495,38 +462,31 @@ void updateJogMovement() {
     return;
   }
 
-  unsigned long now = millis();
+  unsigned long now = micros();
 
-  if (now - lastJogTime < JOG_INTERVAL_MS) {
+  if (now - lastJogMicros < JOG_INTERVAL_US) {
     return;
   }
 
-  lastJogTime = now;
+  lastJogMicros = now;
 
-  long currentX = Motion::getX();
-  long currentY = Motion::getY();
-
-  long targetX = currentX;
-  long targetY = currentY;
+  int xDir = 0;
+  int yDir = 0;
 
   if (jogDirection == 'w') {
-    targetY = currentY + jogStepAmount;
+    yDir = 1;
   }
   else if (jogDirection == 's') {
-    targetY = currentY - jogStepAmount;
+    yDir = -1;
   }
-
-  // Sideways buttons flipped from previous version:
-  // a now moves the opposite X direction
-  // d now moves the opposite X direction
   else if (jogDirection == 'a') {
-    targetX = currentX + jogStepAmount;
+    xDir = 1;
   }
   else if (jogDirection == 'd') {
-    targetX = currentX - jogStepAmount;
+    xDir = -1;
   }
 
-  Motion::moveTo(targetX, targetY);
+  Motion::jogStep(xDir, yDir);
 }
 
 // ---------------- MAGNET COMMANDS ----------------
@@ -569,11 +529,9 @@ void printHelp() {
   Serial.println(F("Manual movement:"));
   Serial.println(F("  w = jog up"));
   Serial.println(F("  s = jog down"));
-  Serial.println(F("  a = jog left/right swapped direction"));
-  Serial.println(F("  d = jog left/right swapped direction"));
+  Serial.println(F("  a = jog left"));
+  Serial.println(F("  d = jog right"));
   Serial.println(F("  x = stop jog"));
-  Serial.println(F("  + = bigger jog step"));
-  Serial.println(F("  - = smaller jog step"));
   Serial.println();
   Serial.println(F("Magnet:"));
   Serial.println(F("  f = force magnet off"));
@@ -596,7 +554,7 @@ void printHelp() {
   Serial.println();
   Serial.println(F("Chess move commands:"));
   Serial.println(F("  r + e2e4     = regular move"));
-  Serial.println(F("  y + e4d5b    = capture, captured piece is black"));
+  Serial.println(F("  y + e4d5b    = capture command"));
   Serial.println(F("  l + wk       = white kingside castle"));
   Serial.println(F("  l + wq       = white queenside castle"));
   Serial.println(F("  l + bk       = black kingside castle"));

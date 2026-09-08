@@ -20,11 +20,10 @@ const int B_STEP_PIN = 5;
 const int ENABLE_PIN = 8;
 
 // Bigger number = slower movement.
-// This is the simple speed version that worked before.
-int stepDelayUs = 2200;
+// Smaller number = faster movement.
+int stepDelayUs = 900;
 
 const int STEP_PULSE_US = 5;
-const int MOVE_SETTLE_DELAY_MS = 120;
 
 // Change these only if a motor direction itself is wrong.
 const bool INVERT_MOTOR_A = false;
@@ -74,63 +73,58 @@ namespace Motion {
     return currentY;
   }
 
-  bool moveTo(long targetX, long targetY) {
-    long dx = targetX - currentX;
-    long dy = targetY - currentY;
+  void jogStep(int xDir, int yDir) {
+    if (xDir > 0) xDir = 1;
+    else if (xDir < 0) xDir = -1;
 
-    long stepsX = abs(dx);
-    long stepsY = abs(dy);
+    if (yDir > 0) yDir = 1;
+    else if (yDir < 0) yDir = -1;
 
-    int xDir = 0;
-    int yDir = 0;
-
-    if (dx > 0) xDir = 1;
-    else if (dx < 0) xDir = -1;
-
-    if (dy > 0) yDir = 1;
-    else if (dy < 0) yDir = -1;
-
-    long totalSteps = max(stepsX, stepsY);
-
-    if (totalSteps == 0) {
-      delay(MOVE_SETTLE_DELAY_MS);
-      return true;
+    if (xDir == 0 && yDir == 0) {
+      return;
     }
 
-    long errorX = 0;
-    long errorY = 0;
+    stepCoreXYStep(xDir, yDir);
 
-    for (long i = 0; i < totalSteps; i++) {
+    currentX += xDir;
+    currentY += yDir;
+  }
+
+  bool goTo(long targetX, long targetY) {
+    // Automatic movement uses the exact same stepping as WASD.
+    // Horizontal first, then vertical.
+    // No separate movement style. No stop-start delay.
+
+    while (currentX != targetX) {
       if (checkEmergencySerial()) {
         Magnet::forceOff();
         Serial.println(F("ERR MOVE_ABORTED_BY_USER"));
-        delay(500);
         return false;
       }
 
-      errorX += stepsX;
-      errorY += stepsY;
-
-      int doX = 0;
-      int doY = 0;
-
-      if (errorX >= totalSteps) {
-        doX = xDir;
-        errorX -= totalSteps;
+      if (currentX < targetX) {
+        jogStep(1, 0);
       }
-
-      if (errorY >= totalSteps) {
-        doY = yDir;
-        errorY -= totalSteps;
+      else {
+        jogStep(-1, 0);
       }
-
-      stepCoreXYStep(doX, doY);
-
-      currentX += doX;
-      currentY += doY;
     }
 
-    delay(MOVE_SETTLE_DELAY_MS);
+    while (currentY != targetY) {
+      if (checkEmergencySerial()) {
+        Magnet::forceOff();
+        Serial.println(F("ERR MOVE_ABORTED_BY_USER"));
+        return false;
+      }
+
+      if (currentY < targetY) {
+        jogStep(0, 1);
+      }
+      else {
+        jogStep(0, -1);
+      }
+    }
+
     return true;
   }
 }
@@ -152,7 +146,7 @@ static bool checkEmergencySerial() {
 
   if (ch == '!' || ch == 'f' || ch == 'o' || ch == 'x') {
     Magnet::forceOff();
-    Serial.print(F("Emergency magnet off during move. Command: "));
+    Serial.print(F("Emergency magnet off during movement. Command: "));
     Serial.println(ch);
     return true;
   }
