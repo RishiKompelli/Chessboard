@@ -77,8 +77,6 @@ void loop() {
   updateJogMovement();
 }
 
-// ---------------- SERIAL COMMAND HANDLING ----------------
-
 void handleSerialChar(char ch) {
   if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') {
     return;
@@ -320,6 +318,7 @@ void executeBufferedCommand() {
     bool success = Calibration::movePieceSafe(fromFile, fromRank, toFile, toRank);
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK MOVE_COMMAND"));
@@ -353,6 +352,7 @@ void executeBufferedCommand() {
     );
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK CAPTURE_COMMAND"));
@@ -386,6 +386,7 @@ void executeBufferedCommand() {
     }
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK CASTLE_COMMAND"));
@@ -419,6 +420,7 @@ void executeBufferedCommand() {
     );
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK PROMOTION_COMMAND"));
@@ -455,6 +457,7 @@ void executeBufferedCommand() {
     );
 
     Magnet::forceOff();
+    delay(300);
 
     if (success) {
       Serial.println(F("OK EN_PASSANT_COMMAND"));

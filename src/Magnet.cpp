@@ -3,7 +3,9 @@
 
 const int MAGNET_PIN = 9;
 
-// Change these only if your MOSFET module is active-low.
+// Normal MOSFET:
+// D9 HIGH = magnet on
+// D9 LOW  = magnet off
 const int MAGNET_ON_LEVEL = HIGH;
 const int MAGNET_OFF_LEVEL = LOW;
 
@@ -13,29 +15,37 @@ namespace Magnet {
 
   void begin() {
     pinMode(MAGNET_PIN, OUTPUT);
+
+    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
+    delay(200);
+
     forceOff();
+
+    Serial.println(F("Magnet system ready."));
   }
 
   void on() {
     digitalWrite(MAGNET_PIN, MAGNET_ON_LEVEL);
     magnetState = true;
+
     Serial.println(F("MAGNET ON"));
   }
 
   void off() {
-    digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
-    magnetState = false;
-    Serial.println(F("MAGNET OFF"));
+    forceOff();
   }
 
   void forceOff() {
     digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
-    delay(20);
+    delay(80);
+
     digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
-    delay(20);
+    delay(80);
+
     digitalWrite(MAGNET_PIN, MAGNET_OFF_LEVEL);
 
     magnetState = false;
+
     Serial.println(F("MAGNET FORCE OFF"));
   }
 

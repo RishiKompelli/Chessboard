@@ -341,6 +341,15 @@ namespace Calibration {
     Serial.print(F("Between move buffer ms: "));
     Serial.println(MAGNET_BETWEEN_MOVE_BUFFER_MS);
 
+    Serial.print(F("Magnet drop delay ms: "));
+    Serial.println(MAGNET_DROP_DELAY_MS);
+
+    Serial.print(F("Between move buffer ms: "));
+    Serial.println(MAGNET_BETWEEN_MOVE_BUFFER_MS);
+
+    Serial.print(F("Release forward offset in squares: "));
+    Serial.println(RELEASE_FORWARD_OFFSET_SQUARES);
+
     Serial.print(F("Magnet state: "));
     Serial.println(Magnet::isOn() ? F("on") : F("off"));
 
