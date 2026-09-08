@@ -1,5 +1,7 @@
 #include "Motion.h"
+#include "Magnet.h"
 #include <Arduino.h>
+#include <ctype.h>
 
 // ---------------- PIN SETUP ----------------
 //
@@ -18,16 +20,13 @@ const int B_STEP_PIN = 5;
 const int ENABLE_PIN = 8;
 
 // Bigger number = slower movement.
-// Start around 1400. If pieces still slip, try 1800 or 2200.
-int stepDelayUs = 1400;
+// This is the simple speed version that worked before.
+int stepDelayUs = 2200;
 
-// Pulse width for STEP pins
 const int STEP_PULSE_US = 5;
-
-// Pause after finishing each Motion::moveTo call
 const int MOVE_SETTLE_DELAY_MS = 120;
 
-// Change these if your directions are backwards
+// Change these only if a motor direction itself is wrong.
 const bool INVERT_MOTOR_A = false;
 const bool INVERT_MOTOR_B = false;
 
@@ -38,6 +37,7 @@ long currentY = 0;
 static void stepMotorA(int dir);
 static void stepMotorB(int dir);
 static void stepCoreXYStep(int xDir, int yDir);
+static bool checkEmergencySerial();
 
 namespace Motion {
 
@@ -101,6 +101,13 @@ namespace Motion {
     long errorY = 0;
 
     for (long i = 0; i < totalSteps; i++) {
+      if (checkEmergencySerial()) {
+        Magnet::forceOff();
+        Serial.println(F("ERR MOVE_ABORTED_BY_USER"));
+        delay(500);
+        return false;
+      }
+
       errorX += stepsX;
       errorY += stepsY;
 
@@ -126,6 +133,31 @@ namespace Motion {
     delay(MOVE_SETTLE_DELAY_MS);
     return true;
   }
+}
+
+// ---------------- EMERGENCY SERIAL CHECK ----------------
+
+static bool checkEmergencySerial() {
+  if (Serial.available() <= 0) {
+    return false;
+  }
+
+  char ch = Serial.read();
+
+  if (ch == '\r' || ch == '\n' || ch == ' ') {
+    return false;
+  }
+
+  ch = tolower(ch);
+
+  if (ch == '!' || ch == 'f' || ch == 'o' || ch == 'x') {
+    Magnet::forceOff();
+    Serial.print(F("Emergency magnet off during move. Command: "));
+    Serial.println(ch);
+    return true;
+  }
+
+  return false;
 }
 
 // ---------------- COREXY STEPPING ----------------

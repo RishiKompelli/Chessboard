@@ -28,35 +28,26 @@ bool boardCalibrated = false;
 bool calibrationMode = false;
 int calibrationStep = 0;
 
-// Slower and safer timing values
+// ---------------- TIMING SETTINGS ----------------
+
 const int SQUARE_PAUSE_MS = 900;
 
-// Wait before turning magnet on after reaching the source square
 const int BEFORE_MAGNET_ON_DELAY_MS = 500;
-
-// Wait after turning magnet on before moving the piece
 const int MAGNET_PICKUP_DELAY_MS = 2200;
 
-// Wait after reaching the destination before turning magnet off
 const int BEFORE_MAGNET_OFF_DELAY_MS = 800;
-
-// Extra time magnet stays on after reaching release offset
 const int MAGNET_RELEASE_HOLD_MS = 1200;
 
-// Wait after magnet turns off before moving again
 const int MAGNET_DROP_DELAY_MS = 2200;
-
-// Extra safety pause before the next move
 const int MAGNET_BETWEEN_MOVE_BUFFER_MS = 1500;
 
-// Move a little past the destination center before releasing
 const float RELEASE_FORWARD_OFFSET_SQUARES = 0.08;
+
+// ---------------- EEPROM SETTINGS ----------------
 
 const uint32_t CALIBRATION_MAGIC = 0x43414C34UL; // "CAL4"
 const uint16_t CALIBRATION_VERSION = 1;
 const int CALIBRATION_EEPROM_ADDRESS = 0;
-
-const int MAX_CAPTURED_PIECES_PER_COLOR = 16;
 
 int whiteCapturedCount = 0;
 int blackCapturedCount = 0;
@@ -68,7 +59,8 @@ struct StoredCalibration {
   uint16_t checksum;
 };
 
-// Internal helpers
+// ---------------- INTERNAL HELPER DECLARATIONS ----------------
+
 static void promptCalibrationStep();
 static void finishFourCornerCalibration(bool saveToEeprom = true);
 static void saveCalibration();
@@ -86,10 +78,6 @@ static void makeSureMagnetIsOff(const __FlashStringHelper *reason);
 static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord,
                                 float targetFileCoord, float targetRankCoord);
 
-static bool shouldUseDiagonalPiecePath(char movingPiece,
-                                       int fromFileIndex, int fromRankIndex,
-                                       int toFileIndex, int toRankIndex);
-
 static bool isDiagonalPathClear(int fromFileIndex, int fromRankIndex,
                                 int toFileIndex, int toRankIndex);
 
@@ -97,14 +85,7 @@ static bool isValidSquare(char file, char rank);
 static int fileToIndex(char file);
 static int rankToIndex(char rank);
 
-static bool movePieceToGridPosition(char fromFile, char fromRank,
-                                    float targetFileCoord, float targetRankCoord);
-
-static bool moveCapturedPieceToParking(char capturedFile, char capturedRank,
-                                       char capturedColor);
-
-static bool getParkingGridPosition(char capturedColor,
-                                   float &fileCoord, float &rankCoord);
+// ---------------- CALIBRATION NAMESPACE ----------------
 
 namespace Calibration {
 
@@ -351,17 +332,14 @@ namespace Calibration {
     Serial.print(F("Black captured count: "));
     Serial.println(blackCapturedCount);
 
-    Serial.print(F("Before magnet on delay ms: "));
-    Serial.println(BEFORE_MAGNET_ON_DELAY_MS);
-
     Serial.print(F("Magnet pickup delay ms: "));
     Serial.println(MAGNET_PICKUP_DELAY_MS);
 
-    Serial.print(F("Before magnet off delay ms: "));
-    Serial.println(BEFORE_MAGNET_OFF_DELAY_MS);
+    Serial.print(F("Magnet drop delay ms: "));
+    Serial.println(MAGNET_DROP_DELAY_MS);
 
-    Serial.print(F("Magnet release hold ms: "));
-    Serial.println(MAGNET_RELEASE_HOLD_MS);
+    Serial.print(F("Between move buffer ms: "));
+    Serial.println(MAGNET_BETWEEN_MOVE_BUFFER_MS);
 
     Serial.print(F("Magnet drop delay ms: "));
     Serial.println(MAGNET_DROP_DELAY_MS);
@@ -387,7 +365,7 @@ namespace Calibration {
     Magnet::forceOff();
     delay(MAGNET_DROP_DELAY_MS);
 
-    Serial.println(F("Capture parking counters reset."));
+    Serial.println(F("Capture counters reset."));
   }
 
   bool isCalibrated() {
@@ -493,55 +471,7 @@ namespace Calibration {
   }
 
   bool movePiece(char fromFile, char fromRank, char toFile, char toRank) {
-    if (!boardCalibrated) {
-      Serial.println(F("Board not calibrated yet."));
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    makeSureMagnetIsOff(F("movePiece"));
-
-    Serial.print(F("Moving piece from "));
-    Serial.print(fromFile);
-    Serial.print(fromRank);
-    Serial.print(F(" to "));
-    Serial.print(toFile);
-    Serial.println(toRank);
-
-    bool success = moveToSquare(fromFile, fromRank);
-
-    if (!success) {
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    if (!magnetPickupSequence()) {
-      return false;
-    }
-
-    success = moveToSquare(toFile, toRank);
-
-    if (!success) {
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    if (!moveToReleaseOffset(fileToIndex(fromFile), rankToIndex(fromRank),
-                             fileToIndex(toFile), rankToIndex(toRank))) {
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    magnetReleaseSequence();
-
-    BoardState::movePiece(fromFile, fromRank, toFile, toRank);
-
-    Serial.println(F("Piece move complete."));
-    return true;
+    return movePieceSafe(fromFile, fromRank, toFile, toRank);
   }
 
   bool movePieceSafe(char fromFile, char fromRank, char toFile, char toRank) {
@@ -566,6 +496,9 @@ namespace Calibration {
 
     int toFileIndex = fileToIndex(toFile);
     int toRankIndex = rankToIndex(toRank);
+
+    int dFile = toFileIndex - fromFileIndex;
+    int dRank = toRankIndex - fromRankIndex;
 
     long fromX, fromY;
     long toX, toY;
@@ -603,13 +536,16 @@ namespace Calibration {
       return false;
     }
 
-    int dFile = toFileIndex - fromFileIndex;
-    int dRank = toRankIndex - fromRankIndex;
+    if (dFile != 0 && dRank != 0 && abs(dFile) == abs(dRank)) {
+      Serial.println(F("Using direct diagonal path."));
 
-    if (shouldUseDiagonalPiecePath(movingPiece,
-                                   fromFileIndex, fromRankIndex,
-                                   toFileIndex, toRankIndex)) {
-      Serial.println(F("Using direct diagonal piece path."));
+      if (!isDiagonalPathClear(fromFileIndex, fromRankIndex,
+                               toFileIndex, toRankIndex)) {
+        Serial.println(F("ERR DIAGONAL_PATH_BLOCKED"));
+        Magnet::forceOff();
+        delay(MAGNET_DROP_DELAY_MS);
+        return false;
+      }
 
       if (!Motion::moveTo(toX, toY)) {
         Magnet::forceOff();
@@ -684,7 +620,6 @@ namespace Calibration {
         return false;
       }
     }
-
     else {
       float laneRank = fromRankIndex + 0.5;
       if (dRank < 0 || (dRank == 0 && fromRankIndex == 7)) {
@@ -749,48 +684,20 @@ namespace Calibration {
   bool capturePiece(char fromFile, char fromRank,
                     char toFile, char toRank,
                     char capturedColor) {
-    if (!boardCalibrated) {
-      Serial.println(F("ERR NOT_CALIBRATED"));
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
+    (void)fromFile;
+    (void)fromRank;
+    (void)toFile;
+    (void)toRank;
+    (void)capturedColor;
 
-    makeSureMagnetIsOff(F("capturePiece"));
+    Serial.println(F("ERR AUTO_CAPTURE_DISABLED"));
+    Serial.println(F("Automatic captured-piece parking is disabled."));
+    Serial.println(F("Remove the captured piece manually, then use regular move command r e2e4."));
 
-    if (!isValidSquare(fromFile, fromRank) || !isValidSquare(toFile, toRank)) {
-      Serial.println(F("ERR INVALID_SQUARE"));
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
+    Magnet::forceOff();
+    delay(MAGNET_DROP_DELAY_MS);
 
-    Serial.print(F("Capturing piece on "));
-    Serial.print(toFile);
-    Serial.println(toRank);
-
-    bool success = moveCapturedPieceToParking(toFile, toRank, capturedColor);
-
-    if (!success) {
-      Serial.println(F("ERR CAPTURED_PIECE_PARK_FAILED"));
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    success = movePieceSafe(fromFile, fromRank, toFile, toRank);
-
-    if (!success) {
-      Serial.println(F("ERR ATTACKING_PIECE_MOVE_FAILED"));
-      Magnet::forceOff();
-      delay(MAGNET_DROP_DELAY_MS);
-      return false;
-    }
-
-    magnetReleaseSequence();
-
-    Serial.println(F("OK CAPTURE"));
-    return true;
+    return false;
   }
 
   bool castleKingside(char color) {
@@ -833,8 +740,6 @@ namespace Calibration {
       delay(MAGNET_DROP_DELAY_MS);
       return false;
     }
-
-    magnetReleaseSequence();
 
     Serial.println(F("OK CASTLE_KINGSIDE"));
     return true;
@@ -880,8 +785,6 @@ namespace Calibration {
       delay(MAGNET_DROP_DELAY_MS);
       return false;
     }
-
-    magnetReleaseSequence();
 
     Serial.println(F("OK CASTLE_QUEENSIDE"));
     return true;
@@ -937,8 +840,6 @@ namespace Calibration {
 
     BoardState::setPiece(toFile, toRank, promotedPiece);
 
-    magnetReleaseSequence();
-
     Serial.print(F("OK PROMOTION "));
     Serial.print(toFile);
     Serial.print(toRank);
@@ -972,22 +873,18 @@ namespace Calibration {
       return false;
     }
 
-    Serial.println(F("Starting en passant."));
-
-    bool success = moveCapturedPieceToParking(capturedFile, capturedRank, capturedColor);
-
-    if (!success) {
-      Serial.println(F("ERR EN_PASSANT_CAPTURE_FAILED"));
+    if (!(capturedColor == 'w' || capturedColor == 'W' ||
+          capturedColor == 'b' || capturedColor == 'B')) {
+      Serial.println(F("ERR INVALID_CAPTURE_COLOR"));
       Magnet::forceOff();
       delay(MAGNET_DROP_DELAY_MS);
       return false;
     }
 
-    BoardState::clearSquare(capturedFile, capturedRank);
+    Serial.println(F("Starting manual en passant."));
+    Serial.println(F("Captured pawn should already be removed physically."));
 
-    delay(MAGNET_BETWEEN_MOVE_BUFFER_MS);
-
-    success = movePieceSafe(fromFile, fromRank, toFile, toRank);
+    bool success = movePieceSafe(fromFile, fromRank, toFile, toRank);
 
     if (!success) {
       Serial.println(F("ERR EN_PASSANT_MOVE_FAILED"));
@@ -996,14 +893,16 @@ namespace Calibration {
       return false;
     }
 
-    magnetReleaseSequence();
+    BoardState::clearSquare(capturedFile, capturedRank);
 
     Serial.println(F("OK EN_PASSANT"));
+    BoardState::print();
+
     return true;
   }
 }
 
-// ---------------- INTERNAL HELPERS ----------------
+// ---------------- INTERNAL HELPER FUNCTIONS ----------------
 
 static void promptCalibrationStep() {
   Serial.println();
@@ -1208,37 +1107,14 @@ static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord
   return true;
 }
 
-static bool shouldUseDiagonalPiecePath(char movingPiece,
-                                       int fromFileIndex, int fromRankIndex,
-                                       int toFileIndex, int toRankIndex) {
-  int dFile = toFileIndex - fromFileIndex;
-  int dRank = toRankIndex - fromRankIndex;
-
-  if (movingPiece == '.' || movingPiece == '?') {
-    return false;
-  }
-
-  if (dFile == 0 || dRank == 0) {
-    return false;
-  }
-
-  if (abs(dFile) != abs(dRank)) {
-    return false;
-  }
-
-  if (!isDiagonalPathClear(fromFileIndex, fromRankIndex,
-                           toFileIndex, toRankIndex)) {
-    Serial.println(F("Diagonal path blocked. Falling back to border-lane path."));
-    return false;
-  }
-
-  return true;
-}
-
 static bool isDiagonalPathClear(int fromFileIndex, int fromRankIndex,
                                 int toFileIndex, int toRankIndex) {
   int dFile = toFileIndex - fromFileIndex;
   int dRank = toRankIndex - fromRankIndex;
+
+  if (dFile == 0 || dRank == 0) {
+    return false;
+  }
 
   if (abs(dFile) != abs(dRank)) {
     return false;
@@ -1266,142 +1142,6 @@ static bool isDiagonalPathClear(int fromFileIndex, int fromRankIndex,
   }
 
   return true;
-}
-
-static bool movePieceToGridPosition(char fromFile, char fromRank,
-                                    float targetFileCoord, float targetRankCoord) {
-  if (!boardCalibrated) {
-    Serial.println(F("ERR NOT_CALIBRATED"));
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  makeSureMagnetIsOff(F("movePieceToGridPosition"));
-
-  long fromX;
-  long fromY;
-  long targetX;
-  long targetY;
-
-  if (!squareToPosition(fromFile, fromRank, fromX, fromY)) {
-    Serial.println(F("ERR INVALID_FROM_SQUARE"));
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  if (!gridToPosition(targetFileCoord, targetRankCoord, targetX, targetY)) {
-    Serial.println(F("ERR INVALID_TARGET_GRID"));
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  Serial.print(F("Moving piece from "));
-  Serial.print(fromFile);
-  Serial.print(fromRank);
-  Serial.print(F(" to parking grid position "));
-  Serial.print(targetFileCoord);
-  Serial.print(F(", "));
-  Serial.println(targetRankCoord);
-
-  if (!Motion::moveTo(fromX, fromY)) {
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  if (!magnetPickupSequence()) {
-    return false;
-  }
-
-  if (!Motion::moveTo(targetX, targetY)) {
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  if (!moveToReleaseOffset(fileToIndex(fromFile), rankToIndex(fromRank),
-                           targetFileCoord, targetRankCoord)) {
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  magnetReleaseSequence();
-
-  return true;
-}
-
-static bool moveCapturedPieceToParking(char capturedFile, char capturedRank,
-                                       char capturedColor) {
-  float parkingFileCoord;
-  float parkingRankCoord;
-
-  if (!getParkingGridPosition(capturedColor, parkingFileCoord, parkingRankCoord)) {
-    Serial.println(F("ERR NO_CAPTURE_PARKING_SPACE"));
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  bool success = movePieceToGridPosition(capturedFile, capturedRank,
-                                         parkingFileCoord, parkingRankCoord);
-
-  if (!success) {
-    Magnet::forceOff();
-    delay(MAGNET_DROP_DELAY_MS);
-    return false;
-  }
-
-  if (capturedColor == 'w' || capturedColor == 'W') {
-    whiteCapturedCount++;
-  }
-  else if (capturedColor == 'b' || capturedColor == 'B') {
-    blackCapturedCount++;
-  }
-
-  magnetReleaseSequence();
-
-  return true;
-}
-
-static bool getParkingGridPosition(char capturedColor,
-                                   float &fileCoord, float &rankCoord) {
-  int count;
-
-  if (capturedColor == 'w' || capturedColor == 'W') {
-    count = whiteCapturedCount;
-
-    if (count >= MAX_CAPTURED_PIECES_PER_COLOR) {
-      return false;
-    }
-
-    int column = count / 8;
-    int row = count % 8;
-
-    fileCoord = -1.0 - column;
-    rankCoord = row;
-    return true;
-  }
-
-  if (capturedColor == 'b' || capturedColor == 'B') {
-    count = blackCapturedCount;
-
-    if (count >= MAX_CAPTURED_PIECES_PER_COLOR) {
-      return false;
-    }
-
-    int column = count / 8;
-    int row = count % 8;
-
-    fileCoord = 8.0 + column;
-    rankCoord = row;
-    return true;
-  }
-
-  return false;
 }
 
 static bool isValidSquare(char file, char rank) {

@@ -14,7 +14,8 @@ STOCKFISH_PATH = r"C:\Users\rishi_7b7n0gh\Downloads\stockfish-windows-x86-64-avx
 
 ENGINE_THINK_TIME_SECONDS = 0.5
 
-# Keep this as manual_remove unless your captured-piece parking area works.
+# Captures are manual again.
+# Python will ask you to remove the captured piece by hand.
 CAPTURE_STYLE = "manual_remove"
 # CAPTURE_STYLE = "parking"
 
@@ -25,9 +26,7 @@ def open_arduino():
     print(f"Opening Arduino on {SERIAL_PORT}...")
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
 
-    # Arduino Nano usually resets when serial opens
     time.sleep(2.5)
-
     read_available_lines(ser, 1.0)
 
     print()
@@ -58,10 +57,6 @@ def send_raw_char(ser, ch):
 
 
 def abort_arduino_input(ser):
-    """
-    Clears any stuck Arduino input mode before sending a real command.
-    Requires main.cpp to support the ! command.
-    """
     ser.reset_input_buffer()
 
     ser.write(b"!\n")
@@ -84,12 +79,10 @@ def send_arduino_command(ser, command, expected_ok=None, timeout=600):
     print()
     print(f"> Arduino command: {command}")
 
-    # Clear any half-finished input mode before sending command
     abort_arduino_input(ser)
 
     ser.reset_input_buffer()
 
-    # Send slowly because Arduino reads char-by-char
     for ch in command:
         ser.write(ch.encode())
         ser.flush()
@@ -128,9 +121,7 @@ def send_arduino_command(ser, command, expected_ok=None, timeout=600):
 
     print()
     print("Timed out waiting for Arduino.")
-    print("This usually means the Arduino did not send the expected OK message.")
     print(f"Expected: {expected_ok}")
-    print("The move may still be physically running, or main.cpp may not be printing the matching OK.")
     return False
 
 
@@ -144,13 +135,13 @@ def jog_mode(ser):
     print("Controls:")
     print("  w / up arrow     = move up")
     print("  s / down arrow   = move down")
-    print("  a / left arrow   = move left")
-    print("  d / right arrow  = move right")
+    print("  a / left arrow   = move left/right")
+    print("  d / right arrow  = move left/right")
     print("  space or x       = stop")
     print("  f                = force magnet off")
     print("  v                = toggle magnet")
-    print("  +                = faster")
-    print("  -                = slower")
+    print("  +                = bigger jog step")
+    print("  -                = smaller jog step")
     print("  p                = print position")
     print("  q                = set current position as a1")
     print("  c                = start 4-corner calibration")
@@ -320,7 +311,6 @@ def build_arduino_command(board, move):
     moving_color = board.turn
     moving_color_letter = color_char(moving_color)
 
-    # Castling
     if board.is_castling(move):
         from_file = chess.square_file(move.from_square)
         to_file = chess.square_file(move.to_square)
@@ -332,7 +322,6 @@ def build_arduino_command(board, move):
             "description": "castling",
         }
 
-    # En passant
     if board.is_en_passant(move):
         captured_square = chess.square(
             chess.square_file(move.to_square),
@@ -342,21 +331,13 @@ def build_arduino_command(board, move):
         captured_square_name = chess.square_name(captured_square)
         captured_color_letter = color_char(not moving_color)
 
-        if CAPTURE_STYLE == "parking":
-            return {
-                "command": "e" + from_square + to_square + captured_square_name + captured_color_letter,
-                "expected_ok": "OK EN_PASSANT_COMMAND",
-                "description": "en passant",
-            }
-
         return {
-            "command": "r" + from_square + to_square,
-            "expected_ok": "OK MOVE_COMMAND",
+            "command": "e" + from_square + to_square + captured_square_name + captured_color_letter,
+            "expected_ok": "OK EN_PASSANT_COMMAND",
             "description": "en passant manual remove",
             "manual_remove_square": captured_square_name,
         }
 
-    # Promotion
     if move.promotion is not None:
         promo = promotion_char(move.promotion)
 
@@ -371,22 +352,7 @@ def build_arduino_command(board, move):
 
         return move_info
 
-    # Normal capture
     if board.is_capture(move):
-        if CAPTURE_STYLE == "parking":
-            captured_piece = board.piece_at(move.to_square)
-
-            if captured_piece is None:
-                captured_color_letter = color_char(not moving_color)
-            else:
-                captured_color_letter = color_char(captured_piece.color)
-
-            return {
-                "command": "y" + from_square + to_square + captured_color_letter,
-                "expected_ok": "OK CAPTURE_COMMAND",
-                "description": "capture",
-            }
-
         return {
             "command": "r" + from_square + to_square,
             "expected_ok": "OK MOVE_COMMAND",
@@ -394,7 +360,6 @@ def build_arduino_command(board, move):
             "manual_remove_square": to_square,
         }
 
-    # Normal move
     return {
         "command": "r" + from_square + to_square,
         "expected_ok": "OK MOVE_COMMAND",
@@ -414,8 +379,6 @@ def execute_move_on_arduino(ser, board, move, label):
     print(f"{label} move type: {move_info['description']}")
     print(f"{label} move command: {move_info['command']}")
 
-    # Do not send separate f commands here.
-    # Arduino controls the full magnet sequence inside Calibration.cpp.
     move_ok = send_arduino_command(
         ser,
         move_info["command"],
@@ -461,9 +424,8 @@ def play_game(ser, engine, human_color=chess.WHITE):
 
     print()
     print("Starting full game.")
-    print("Important: do NOT move pieces by hand during the game.")
+    print("Important: do NOT move pieces by hand unless Python tells you to remove a captured piece.")
     print("Type your move, then let the Arduino move your piece.")
-    print("This keeps the Arduino board tracker synced.")
     print()
 
     input("Set all real pieces to the starting position, then press Enter...")
@@ -579,10 +541,10 @@ def print_menu():
     print("  g             print grid")
     print("  c/k           calibration commands")
     print("  r e2e4        Arduino regular move")
-    print("  y e4d5b       Arduino capture mode")
+    print("  y e4d5b       old automatic capture command, now disabled")
     print("  l wk          Arduino castle mode")
     print("  n e7e8q       Arduino promotion mode")
-    print("  e e5d6d5b     Arduino en passant mode")
+    print("  e e5d6d5b     en passant manual remove")
     print("  h             Arduino help")
     print("  menu          show this menu")
     print("  quit          exit")
