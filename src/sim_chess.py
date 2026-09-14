@@ -826,23 +826,12 @@ def draw_pieces_on_top(screen, font):
 def draw_ui(screen, font, small_font):
     screen.fill(BG)
 
-    draw_text(screen, font, "Automatic Chessboard CoreXY Simulator", 50, 25, TEXT)
-
     draw_text(
         screen,
         small_font,
-        "Transparent chessboard view: CoreXY rails, belts, carriage, and motors are shown underneath the board.",
+        "Enter = submit, R = reset, B = belts, P = path, O = board overlay, Esc = quit",
         50,
-        60,
-        MUTED,
-    )
-
-    draw_text(
-        screen,
-        small_font,
-        "Controls: Enter = submit | R = reset | B = belts | P = path | O = board overlay | Esc = quit",
-        50,
-        84,
+        40,
         WARNING,
     )
 
