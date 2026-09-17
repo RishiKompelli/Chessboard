@@ -22,6 +22,7 @@ const int ENABLE_PIN = 8;
 // Bigger number = slower movement.
 // Smaller number = faster movement.
 int stepDelayUs = 900;
+int lineStepDelayUs = 1600;
 
 const int STEP_PULSE_US = 5;
 
@@ -126,6 +127,96 @@ namespace Motion {
     }
 
     return true;
+  }
+
+  bool goLine(long targetX, long targetY) {
+    long dx = targetX - currentX;
+    long dy = targetY - currentY;
+
+    long stepsX = abs(dx);
+    long stepsY = abs(dy);
+
+    int xDir = 0;
+    int yDir = 0;
+
+    if (dx > 0) xDir = 1;
+    else if (dx < 0) xDir = -1;
+
+    if (dy > 0) yDir = 1;
+    else if (dy < 0) yDir = -1;
+
+    long totalSteps = max(stepsX, stepsY);
+
+    if (totalSteps == 0) {
+      return true;
+    }
+
+    Serial.print(F("GO_LINE_START currentX="));
+    Serial.print(currentX);
+    Serial.print(F(" currentY="));
+    Serial.print(currentY);
+    Serial.print(F(" targetX="));
+    Serial.print(targetX);
+    Serial.print(F(" targetY="));
+    Serial.print(targetY);
+    Serial.print(F(" dx="));
+    Serial.print(dx);
+    Serial.print(F(" dy="));
+    Serial.println(dy);
+
+    long errorX = 0;
+    long errorY = 0;
+
+    int oldStepDelayUs = stepDelayUs;
+    stepDelayUs = lineStepDelayUs;
+
+    for (long i = 0; i < totalSteps; i++) {
+      if (checkEmergencySerial()) {
+        stepDelayUs = oldStepDelayUs;
+        Magnet::forceOff();
+        Serial.println(F("ERR GO_LINE_ABORTED"));
+        return false;
+      }
+
+      errorX += stepsX;
+      errorY += stepsY;
+
+      int stepX = 0;
+      int stepY = 0;
+
+      if (errorX >= totalSteps) {
+        stepX = xDir;
+        errorX -= totalSteps;
+      }
+
+      if (errorY >= totalSteps) {
+        stepY = yDir;
+        errorY -= totalSteps;
+      }
+
+      jogStep(stepX, stepY);
+    }
+
+    stepDelayUs = oldStepDelayUs;
+
+    Serial.print(F("GO_LINE_DONE currentX="));
+    Serial.print(currentX);
+    Serial.print(F(" currentY="));
+    Serial.println(currentY);
+
+    return true;
+  }
+
+  bool testGoLineRelative(long dx, long dy) {
+    long targetX = currentX + dx;
+    long targetY = currentY + dy;
+
+    Serial.print(F("TEST_GO_LINE_RELATIVE dx="));
+    Serial.print(dx);
+    Serial.print(F(" dy="));
+    Serial.println(dy);
+
+    return goLine(targetX, targetY);
   }
 }
 

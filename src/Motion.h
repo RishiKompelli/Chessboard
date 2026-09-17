@@ -12,6 +12,10 @@ namespace Motion {
   bool goTo(long targetX, long targetY);
 
   void jogStep(int xDir, int yDir);
+
+  bool goLine(long targetX, long targetY);
+
+  bool testGoLineRelative(long dx, long dy);
 }
 
 #endif

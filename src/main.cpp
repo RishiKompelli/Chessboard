@@ -205,6 +205,30 @@ void handleSerialChar(char ch) {
     return;
   }
 
+  if (ch == '1') {
+    stopJog(false);
+    Motion::testGoLineRelative(1000, 1000);
+    return;
+  }
+
+  if (ch == '2') {
+    stopJog(false);
+    Motion::testGoLineRelative(-1000, -1000);
+    return;
+  }
+
+  if (ch == '3') {
+    stopJog(false);
+    Motion::testGoLineRelative(1000, -1000);
+    return;
+  }
+
+  if (ch == '4') {
+    stopJog(false);
+    Motion::testGoLineRelative(-1000, 1000);
+    return;
+  }
+
   Serial.print(F("Unknown command: "));
   Serial.println(ch);
 }
