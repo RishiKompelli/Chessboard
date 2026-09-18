@@ -2,6 +2,7 @@
 #include <EEPROM.h>
 #include <math.h>
 #include <stddef.h>
+#include <ctype.h>
 
 #include "Calibration.h"
 #include "Motion.h"
@@ -30,16 +31,16 @@ int calibrationStep = 0;
 
 // ---------------- TIMING SETTINGS ----------------
 
-const int SQUARE_PAUSE_MS = 900;
+const int SQUARE_PAUSE_MS = 500;
 
-const int BEFORE_MAGNET_ON_DELAY_MS = 500;
-const int MAGNET_PICKUP_DELAY_MS = 2200;
+const int BEFORE_MAGNET_ON_DELAY_MS = 300;
+const int MAGNET_PICKUP_DELAY_MS = 2000;
 
-const int BEFORE_MAGNET_OFF_DELAY_MS = 800;
-const int MAGNET_RELEASE_HOLD_MS = 1200;
+const int BEFORE_MAGNET_OFF_DELAY_MS = 600;
+const int MAGNET_RELEASE_HOLD_MS = 1000;
 
-const int MAGNET_DROP_DELAY_MS = 2200;
-const int MAGNET_BETWEEN_MOVE_BUFFER_MS = 1500;
+const int MAGNET_DROP_DELAY_MS = 2000;
+const int MAGNET_BETWEEN_MOVE_BUFFER_MS = 1200;
 
 const float RELEASE_FORWARD_OFFSET_SQUARES = 0.08;
 
@@ -75,12 +76,19 @@ static bool magnetPickupSequence();
 static void magnetReleaseSequence();
 static void makeSureMagnetIsOff(const __FlashStringHelper *reason);
 
-static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord,
-                                float targetFileCoord, float targetRankCoord);
+static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord, float targetFileCoord, float targetRankCoord);
 
 static bool isValidSquare(char file, char rank);
 static int fileToIndex(char file);
 static int rankToIndex(char rank);
+
+static bool isDiagonalMove(int fromFileIndex, int fromRankIndex, int toFileIndex, int toRankIndex);
+
+static bool shouldUseDirectDiagonal(char movingPiece, int fromFileIndex, int fromRankIndex, int toFileIndex, int toRankIndex);
+
+static bool moveDirectDiagonalWithCorrection(int fromFileIndex, int fromRankIndex,
+                                             int toFileIndex, int toRankIndex,
+                                             long toX, long toY);
 
 // ---------------- CALIBRATION NAMESPACE ----------------
 
@@ -523,6 +531,7 @@ namespace Calibration {
     Serial.print(toFile);
     Serial.println(toRank);
 
+    // Go to pickup square the old way: horizontal/vertical goTo.
     if (!Motion::goTo(fromX, fromY)) {
       Magnet::forceOff();
       delay(MAGNET_DROP_DELAY_MS);
@@ -530,8 +539,52 @@ namespace Calibration {
     }
 
     if (!magnetPickupSequence()) {
+      Magnet::forceOff();
+      delay(MAGNET_DROP_DELAY_MS);
       return false;
     }
+
+    // ------------------------------------------------------------
+    // DIRECT DIAGONAL CARRY
+    // Only for bishop, queen, king, or pawn diagonal moves.
+    // Pickup movement above is unchanged.
+    // ------------------------------------------------------------
+
+    if (shouldUseDirectDiagonal(movingPiece,
+                                fromFileIndex, fromRankIndex,
+                                toFileIndex, toRankIndex)) {
+      Serial.println(F("Using equal diagonal path with correction."));
+
+      if (!moveDirectDiagonalWithCorrection(fromFileIndex, fromRankIndex,
+                                            toFileIndex, toRankIndex,
+                                            toX, toY)) {
+        Magnet::forceOff();
+        delay(MAGNET_DROP_DELAY_MS);
+        return false;
+      }
+
+      // For a direct diagonal, release offset should be based on the real
+      // from square and to square.
+      if (!moveToReleaseOffset(fromFileIndex, fromRankIndex,
+                               toFileIndex, toRankIndex)) {
+        Magnet::forceOff();
+        delay(MAGNET_DROP_DELAY_MS);
+        return false;
+      }
+
+      magnetReleaseSequence();
+
+      BoardState::movePiece(fromFile, fromRank, toFile, toRank);
+
+      Serial.println(F("Equal diagonal piece move complete."));
+      return true;
+    }
+
+
+    // ------------------------------------------------------------
+    // SAFE LANE CARRY
+    // Everything else uses your original lane logic.
+    // ------------------------------------------------------------
 
     if (abs(dRank) >= abs(dFile)) {
       float laneFile = fromFileIndex + 0.5;
@@ -646,9 +699,7 @@ namespace Calibration {
     return true;
   }
 
-  bool capturePiece(char fromFile, char fromRank,
-                    char toFile, char toRank,
-                    char capturedColor) {
+  bool capturePiece(char fromFile, char fromRank, char toFile, char toRank, char capturedColor) {
     (void)fromFile;
     (void)fromRank;
     (void)toFile;
@@ -1072,6 +1123,86 @@ static bool moveToReleaseOffset(float approachFileCoord, float approachRankCoord
   return true;
 }
 
+static bool moveDirectDiagonalWithCorrection(int fromFileIndex, int fromRankIndex,
+                                             int toFileIndex, int toRankIndex,
+                                             long toX, long toY) {
+  (void)fromFileIndex;
+  (void)fromRankIndex;
+  (void)toFileIndex;
+  (void)toRankIndex;
+
+  long startX = Motion::getX();
+  long startY = Motion::getY();
+
+  long dx = toX - startX;
+  long dy = toY - startY;
+
+  long absDx = abs(dx);
+  long absDy = abs(dy);
+
+  int xDir = 0;
+  int yDir = 0;
+
+  if (dx > 0) xDir = 1;
+  else if (dx < 0) xDir = -1;
+
+  if (dy > 0) yDir = 1;
+  else if (dy < 0) yDir = -1;
+
+  if (xDir == 0 || yDir == 0) {
+    Serial.println(F("ERR NOT_A_MACHINE_DIAGONAL"));
+    Serial.print(F("dx="));
+    Serial.print(dx);
+    Serial.print(F(" dy="));
+    Serial.println(dy);
+    return false;
+  }
+
+  const float DIAGONAL_SCALE_X = 2.1;
+  const float DIAGONAL_SCALE_Y = 2.1;
+
+  long baseDistance = (absDx + absDy) / 2;
+
+  long equalDistanceX = (long)(baseDistance * DIAGONAL_SCALE_X);
+  long equalDistanceY = (long)(baseDistance * DIAGONAL_SCALE_Y);
+
+  long equalTargetX = startX + xDir * equalDistanceX;
+  long equalTargetY = startY + yDir * equalDistanceY;
+
+  Serial.println(F("EQUAL_DIAGONAL_SEPARATE_XY_SCALE"));
+
+  Serial.print(F("Start X="));
+  Serial.print(startX);
+  Serial.print(F(" Y="));
+  Serial.println(startY);
+
+  Serial.print(F("Exact destination X="));
+  Serial.print(toX);
+  Serial.print(F(" Y="));
+  Serial.println(toY);
+
+  Serial.print(F("baseDistance="));
+  Serial.print(baseDistance);
+  Serial.print(F(" equalDistanceX="));
+  Serial.print(equalDistanceX);
+  Serial.print(F(" equalDistanceY="));
+  Serial.println(equalDistanceY);
+
+  Serial.print(F("Commanded diagonal target X="));
+  Serial.print(equalTargetX);
+  Serial.print(F(" Y="));
+  Serial.println(equalTargetY);
+
+  if (!Motion::goLine(equalTargetX, equalTargetY)) {
+    Serial.println(F("ERR EQUAL_DIAGONAL_MOVE_FAILED"));
+    return false;
+  }
+  Motion::setPosition(toX, toY);
+
+  Serial.println(F("Software position corrected to destination."));
+  return true;
+}
+
 static bool isValidSquare(char file, char rank) {
   return file >= 'a' && file <= 'h' && rank >= '1' && rank <= '8';
 }
@@ -1082,4 +1213,37 @@ static int fileToIndex(char file) {
 
 static int rankToIndex(char rank) {
   return rank - '1';
+}
+
+static bool isDiagonalMove(int fromFileIndex, int fromRankIndex, int toFileIndex, int toRankIndex) {
+  int dFile = abs(toFileIndex - fromFileIndex);
+  int dRank = abs(toRankIndex - fromRankIndex);
+
+  return dFile == dRank && dFile != 0;
+}
+
+static bool shouldUseDirectDiagonal(char movingPiece, int fromFileIndex, int fromRankIndex, int toFileIndex, int toRankIndex) {
+  if (!isDiagonalMove(fromFileIndex, fromRankIndex, toFileIndex, toRankIndex)) {
+    return false;
+  }
+
+  movingPiece = tolower(movingPiece);
+
+  if (movingPiece == 'b') {
+    return true;
+  }
+
+  if (movingPiece == 'q') {
+    return true;
+  }
+
+  if (movingPiece == 'k') {
+    return true;
+  }
+
+  if (movingPiece == 'p') {
+    return true;
+  }
+
+  return false;
 }

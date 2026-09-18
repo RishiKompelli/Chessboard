@@ -21,7 +21,7 @@ const int ENABLE_PIN = 8;
 
 // Bigger number = slower movement.
 // Smaller number = faster movement.
-int stepDelayUs = 900;
+int stepDelayUs = 1200;
 int lineStepDelayUs = 1600;
 
 const int STEP_PULSE_US = 5;
@@ -64,6 +64,16 @@ namespace Motion {
     currentY = 0;
 
     Serial.println(F("Motion position zeroed."));
+  }
+
+  void setPosition(long x, long y) {
+    currentX = x;
+    currentY = y;
+
+    Serial.print(F("Position manually set: X="));
+    Serial.print(currentX);
+    Serial.print(F(" Y="));
+    Serial.println(currentY);
   }
 
   long getX() {
@@ -158,24 +168,45 @@ namespace Motion {
     Serial.print(F(" targetX="));
     Serial.print(targetX);
     Serial.print(F(" targetY="));
-    Serial.print(targetY);
-    Serial.print(F(" dx="));
-    Serial.print(dx);
-    Serial.print(F(" dy="));
-    Serial.println(dy);
+    Serial.println(targetY);
 
     long errorX = 0;
     long errorY = 0;
 
     int oldStepDelayUs = stepDelayUs;
-    stepDelayUs = lineStepDelayUs;
+
+    // ---------------- ACCELERATION SETTINGS ----------------
+
+    // Start slow so the motor does not grind / skip steps.
+    const int START_DELAY_US = 4000;
+
+    // Normal diagonal running speed.
+    const int RUN_DELAY_US = 1800;
+
+    // Number of logical steps used to accelerate.
+    const long RAMP_STEPS = 250;
+
+    // -------------------------------------------------------
 
     for (long i = 0; i < totalSteps; i++) {
+
       if (checkEmergencySerial()) {
         stepDelayUs = oldStepDelayUs;
         Magnet::forceOff();
         Serial.println(F("ERR GO_LINE_ABORTED"));
         return false;
+      }
+
+      // Slowly accelerate only at the beginning.
+      if (i < RAMP_STEPS) {
+        long delayRange = START_DELAY_US - RUN_DELAY_US;
+
+        stepDelayUs =
+            START_DELAY_US -
+            ((long)delayRange * i / RAMP_STEPS);
+      }
+      else {
+        stepDelayUs = RUN_DELAY_US;
       }
 
       errorX += stepsX;
